@@ -1,36 +1,33 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import fs from "fs";
 import path from "path";
-import { PGlite } from "@electric-sql/pglite";
-import { citext } from "@electric-sql/pglite/contrib/citext";
-import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
 import { getDB } from "@/lib/server/store";
-// @ts-expect-error plain ESM script shared with the migration CLI
-import { importDb, verifyImport } from "../scripts/lib/pg-import.mjs";
+import { openPglite, type Db } from "@/lib/server/sql/driver";
+import { applySchema } from "@/lib/server/sql/schema";
+import { importDb, verifyImport, type ImportReport } from "@/lib/server/sql/import-db";
 
-// Applies db/schema.sql to a real Postgres (PGlite) and loads the app's complete
-// data set into it. If the schema drifts from src/lib/types.ts, or the importer
-// loses or invents data, this fails.
+// Applies db/schema.sql and the migrations to a real Postgres (PGlite) and loads the
+// app's complete data set into it. If the schema drifts from src/lib/types.ts, or the
+// importer loses or invents data, this fails.
 
-const schema = fs.readFileSync(path.join(process.cwd(), "db", "schema.sql"), "utf8");
-let pg: PGlite;
+let pg: Db;
 let source: ReturnType<typeof getDB>;
-let result: { inserted: Record<string, number>; skipped: Record<string, number> };
+let result: ImportReport;
 
-const rows = async <T = Record<string, unknown>>(sql: string, params?: unknown[]) => (await pg.query<T>(sql, params)).rows;
+const rows = <T = Record<string, unknown>>(sql: string, params?: unknown[]) => pg.query<T>(sql, params);
 const one = async <T = Record<string, unknown>>(sql: string, params?: unknown[]) => (await rows<T>(sql, params))[0];
 const q = (sql: string, params?: unknown[]) => pg.query(sql, params);
 
 async function fresh() {
-  const p = new PGlite({ extensions: { citext, pg_trgm } });
-  await p.exec(schema);
+  const p = await openPglite();
+  await applySchema(p);
   return p;
 }
 
 beforeAll(async () => {
   source = getDB();
   pg = await fresh();
-  result = await importDb(source, q);
+  result = await importDb(source, pg);
 }, 120_000);
 afterAll(() => pg.close());
 
@@ -47,13 +44,13 @@ describe("schema + importer", () => {
   });
 
   it("reproduces the app's song_stats exactly through triggers", async () => {
-    expect(await verifyImport(source, q)).toEqual([]);
+    expect(await verifyImport(source, pg)).toEqual([]);
   });
 
   it("verification actually notices a difference", async () => {
     await q("begin");
     await q("update song_stats set rating_count = rating_count + 1 where song_id = (select song_id from song_stats order by rating_count desc limit 1)");
-    const problems = await verifyImport(source, q);
+    const problems = await verifyImport(source, pg);
     await q("rollback");
     expect(problems.length).toBe(1);
     expect(problems[0]).toMatch(/song_stats: .* differs/);
@@ -153,11 +150,11 @@ describe("importing data with dangling references", () => {
     broken.reviewLikes.push({ userId: broken.users[0].id, entryId: "en_deleted", createdAt: new Date().toISOString() });
     broken.ratings.push({ userId: "us_ghost", songId: broken.songs[0].id, rating: 4, createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" });
     broken.comments.push({ id: "co_orphan", userId: broken.users[0].id, targetType: "entry", targetId: someEntry, parentId: "co_missing", body: "a reply to a deleted comment", createdAt: "2026-01-01T00:00:00Z" });
-    const r = await importDb(broken, (sql: string, params?: unknown[]) => p.query(sql, params));
+    const r = await importDb(broken, p);
     expect(r.skipped).toEqual({ activity_events: 1, review_likes: 1, ratings: 1 });
     // The reply survives as a top-level comment.
-    expect((await p.query<{ parent_id: string | null }>("select parent_id from comments where id = 'co_orphan'")).rows[0].parent_id).toBeNull();
-    expect(await verifyImport(source, (sql: string) => p.query(sql))).toEqual([]);
+    expect((await p.query<{ parent_id: string | null }>("select parent_id from comments where id = 'co_orphan'"))[0].parent_id).toBeNull();
+    expect(await verifyImport(source, p)).toEqual([]);
     await p.close();
   }, 120_000);
 });

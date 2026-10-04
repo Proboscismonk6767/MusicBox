@@ -4,6 +4,7 @@ import type { CommentView, Cover, FeedItem, ListCard, ReviewView, SongCard, User
 import { idx, type Indexes } from "./indexes";
 import { avg, weightedAvg } from "./stats";
 import { slugify } from "../util";
+import { norm } from "../search-norm";
 import { toPublic } from "./auth";
 
 const MAX_DIARY_ROWS = 1000;
@@ -709,10 +710,6 @@ export function compatibility(aId: string, bId: string): { score: number; shared
 }
 
 // ── Search ──────────────────────────────────────────────────────────────
-
-function norm(s: string) {
-  return s.normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
-}
 
 export function search(q: string, limit = 8, viewerId?: string) {
   const i = idx();

@@ -25,9 +25,9 @@ The product surface is already wide: diary, ratings, reviews, lists, follows, re
 | Terms, Privacy, Copyright pages | Drafted. Need a lawyer's review, then `NEXT_PUBLIC_LEGAL_REVIEWED=true` |
 | Error webhook, `/api/health`, daily event counts | Done. Sentry and PostHog themselves are not set up |
 | Postgres schema v2 and migration check | Done (`npm run db:check`) |
-| **Postgres cutover** | **Not done.** Multi-day port of the synchronous data layer. This now blocks scaling past one process |
+| Postgres backend | Done (`DATA_BACKEND=postgres`). Every read and write proven identical to the JSON store by parity tests; full suite and a browser walk-through pass on a real PostgreSQL 16. Rate limiter, import queue and metrics are still per instance |
 | Email verification, password reset, Apple/Google sign-in | Not done. Needs an email field on users, plus accounts and keys only the owner can create |
-| Load test | Script added (`npm run loadtest`). Artist pages fixed (p95 4 s down to about 1 s). Single-process ceiling is about 67 req/s, so the Phase 0 exit target (p95 under 500 ms at 1k concurrent users) needs Postgres and several instances |
+| Load test | Script added (`npm run loadtest`). Artist pages fixed (p95 4 s down to about 1 s). One instance: about 67 req/s on JSON, about 31 req/s on Postgres. The Phase 0 exit target (p95 under 500 ms at 1k concurrent users) now needs several instances and fewer queries per page |
 | Last.fm import, backups restored once, MusicBrainz mirror | Not done |
 
 ## Where you were at the start (honest assessment)
@@ -141,9 +141,9 @@ Don't monetise until the habit exists. Ranked by fit with the product:
 
 ## The next 10 things to do
 
-Done: 2 (catalogue), 5 (legal pages drafted), 6 (Spotify importer), 7 (share images; polish Year in Review before late November), 8 (load test run and the worst bottleneck fixed). Partly done: 4 (health check, error webhook and metrics exist; Sentry, PostHog and a restored backup do not).
+Done: the Postgres port (was 1), 2 (catalogue), 5 (legal pages drafted), 6 (Spotify importer), 7 (share images; polish Year in Review before late November), 8 (load test run and the worst bottleneck fixed). Partly done: 4 (health check, error webhook and metrics exist; Sentry, PostHog and a restored backup do not).
 
-1. **Port `store.ts` and `queries.ts` to Postgres** (feature-flag it). This is now the main blocker.
+1. Deploy on a managed Postgres, move the rate limiter, import queue and metrics off the instance (Redis or Postgres tables), then run two or more instances.
 2. Email verification, password reset, and Apple/Google sign-in. Add an email field first.
 3. Finish Phase 0 ops: Sentry, uptime monitoring, PostHog, a backup you have restored once, and a MusicBrainz mirror.
 4. Get the legal pages reviewed, then set `NEXT_PUBLIC_LEGAL_REVIEWED=true`.

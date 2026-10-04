@@ -1,5 +1,5 @@
 // Core domain model. Mirrors the relational schema in /db/schema.sql so the
-// JSON-backed store can be swapped for Postgres without touching the UI.
+// JSON store and Postgres (DATA_BACKEND) hand the UI identical objects.
 
 export type ID = string;
 export type Visibility = "public" | "unlisted" | "private";

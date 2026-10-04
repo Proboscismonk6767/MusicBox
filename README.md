@@ -20,14 +20,16 @@ Open http://localhost:3000. The database seeds itself on the first request with 
 | Script | What it does |
 | --- | --- |
 | `npm run dev` | Dev server |
-| `npm test` | Security test suite (Vitest) |
+| `npm test` | Test suite (Vitest) against the JSON store |
+| `npm run test:postgres` | The same suite against an embedded Postgres. Add `TEST_DATABASE_URL=postgres://admin@host/postgres` to run it on a real server (one throwaway database per test file). |
 | `npm run lint` / `npm run typecheck` | ESLint / TypeScript |
 | `npm run build && npm start` | Production build |
 | `npm run seed` | Deletes `data/db.json` so the next request re-seeds |
 | `npm run artwork` | Fetches real album covers from the iTunes Search API into `data/artwork.json`. Without it, generated covers are shown. |
 | `npm run db:check` | Dry run of the Postgres migration. Loads your `data/db.json` into an embedded Postgres (PGlite, no account needed) and checks that nothing is dropped. |
-| `npm run db:migrate` | Loads the data into a real Postgres (`DATABASE_URL`). The app does not read from it yet, see "Moving to production". |
+| `npm run db:migrate` | Copies `data/db.json` into a real Postgres (`DATABASE_URL`): applies the schema and migrations, loads everything in one transaction and verifies it. |
 | `npm run loadtest` | Hits a running server with a mix of pages. `npm run loadtest -- --url=http://localhost:3200 --users=50 --seconds=20`. Run it against `next start`, not `next dev`. |
+| `npm run e2e` | Browser walk-through of the main flows against a running server (needs `npm i --no-save playwright-core` and the demo data). |
 
 ## All the music in the world
 
@@ -66,7 +68,27 @@ Songs imported earlier from iTunes keep working. Set `METADATA_PROVIDER=itunes` 
 
 - **Health check**: `GET /api/health` returns 200 only if the data store loads. Point an uptime monitor at it.
 - **Metrics**: `GET /api/admin/metrics?days=30` (admins only) returns a count per event per day: `signup`, `login`, `log`, `first_log`, `follow`, `import_started`, `import_completed`, `share_clicked`. It is cookieless and stores no user ids or IPs.
-- **Load test**: on a 4-core machine, one Node process served about 67 requests per second, with the load generator on the same machine. With 10 users the p95 was about 230 ms. With 50 users it was about 1.1 s, which is queueing, not a slow query. A CPU profile shows the time is spent in Next.js rendering and compression, not in one hot spot. More capacity means running more than one instance, which needs Postgres first.
+- **Load test** (4-core machine, load generator and database on the same machine):
+
+  | Backend | Requests/s per instance | p95 at 10 users | p95 at 50 users |
+  | --- | --- | --- | --- |
+  | JSON store | about 67 | about 230 ms | about 1.1 s |
+  | Postgres 16 | about 31 | about 580 ms | about 2.9 s |
+
+  Postgres is slower per instance because each page makes 10 to 40 small queries instead of reading memory (no single query takes more than 6 ms). What it buys is that you can run as many instances as you need behind a load balancer, and the data no longer has to fit in one process's memory. Profile before optimising: the next steps would be fewer round trips on the song and artist pages, and a CDN cache for signed-out pages.
+
+## Using Postgres
+
+1. Create a database (Postgres 14 or newer; the `pg_trgm` and `citext` extensions must be available, as they are on Supabase, Neon, RDS and Cloud SQL).
+2. Set `DATA_BACKEND=postgres` and `DATABASE_URL` (add `?sslmode=require` for managed databases). On first start the app applies `db/schema.sql` and `db/migrations/`, and seeds the catalogue if the database is empty.
+3. To bring existing data across, stop the app, run `npm run db:check` (dry run), then `DATABASE_URL=... npm run db:migrate`, then start the app with `DATA_BACKEND=postgres`.
+4. Back up with `pg_dump` (or your provider's snapshots), and restore one at least once to prove it works.
+
+Without `DATABASE_URL`, development uses an embedded Postgres stored in `DATA_DIR/pglite`, so you can try it with no install.
+
+Still per instance, even on Postgres (move these before running several instances): the rate limiter (memory; use Redis or Upstash), the Spotify import queue and the daily metrics (files in `DATA_DIR`), and the catalogue cache (a file; harmless if each instance has its own).
+
+How the two backends are kept identical: every read and write goes through `src/lib/server/data.ts`. The JSON store (`queries.ts`, `commands-json.ts`) is the reference, and `tests/sql-parity.test.ts` and `tests/sql-writes-parity.test.ts` load the same data into both and compare every read, for many kinds of viewer, and the result of a 175-step write scenario, table by table. `tests/sql-concurrency.test.ts` checks parallel writes on Postgres. `tests/architecture.test.ts` fails if code outside the JSON backend touches the JSON store directly.
 
 ## Typography
 
@@ -83,10 +105,11 @@ src/
     views.ts           View models passed to the UI
     seed/              Catalogue, community and deterministic seed generator
     server/
-      store.ts         Persistence adapter (JSON document → swap for Postgres)
-      indexes.ts       In-memory secondary indexes, rebuilt after writes
-      queries.ts       Read layer: song/artist/album/genre pages, feed, search, profiles, diary
-      insights.ts      Recommendations, taste compatibility, stats, year in review
+      data.ts          The only door to the data: data.<read>() and commands.<write>(), engine chosen by DATA_BACKEND
+      algorithms.ts    Ranking maths shared by both engines (compatibility, recommendations, stats, search scoring)
+      store.ts, indexes.ts                  JSON engine: the document and its in-memory indexes
+      queries.ts, insights.ts, commands-json.ts   JSON engine: reads and writes (the reference implementation)
+      sql/             Postgres engine: driver (pg / PGlite), schema runner, reads, commands, importer
       metadata.ts      Provider selection, iTunes provider, importing songs and albums
       musicbrainz.ts   MusicBrainz + Cover Art Archive provider (rate limited, cached)
       catalogue-cache.ts, slot-limiter.ts   Disk cache and request spacing for provider calls
@@ -95,25 +118,23 @@ src/
       stats.ts         Aggregation table (song_stats) maintenance
       auth.ts          Sessions (httpOnly cookie, scrypt passwords)
       ratelimit.ts     Token-bucket rate limiting on every mutation
-db/schema.sql          Postgres schema (v2): indexes, aggregation triggers, materialized views
+db/schema.sql          Postgres baseline schema: indexes, aggregation triggers
+db/migrations/         Numbered changes applied after the baseline
 scripts/               Postgres migration, load test, artwork fetchers
 ```
 
 Key decisions:
 - **Ratings, likes and logs are separate.** `ratings` holds your current opinion of a song, one per user and song. `diary_entries` records each individual listen, and a song can be logged as many times as you like. A like (heart) is a personal favourite and is independent of the star rating.
-- **Aggregates are never computed per request.** `songStats` is updated each time a rating, like or log is written. In `schema.sql` the same job is done by triggers.
+- **Aggregates are never computed per request.** `songStats` is updated each time a rating, like or log is written. In Postgres the same job is done by triggers, which lock the song's row so simultaneous writes can't lose a count.
 - **The metadata provider can be swapped.** UI code only talks to `metadataProvider` (MusicBrainz by default, iTunes as an option; any other catalogue can implement the same interface). Songs that aren't in the catalogue are imported, together with their album track list, when someone first opens them. No audio is stored; a preview player only appears when the provider supplies a preview URL.
 - **Recommendations** combine several signals: user-to-user collaborative filtering (people you follow get a boost), your genre affinity and followed artists, with a mild penalty on popularity so the results aren't just the charts. Taste compatibility mixes the correlation of your shared ratings with how much your genre tastes overlap.
 - **Moderation:** users can report reviews, comments, lists and users, and can block or mute others. Admins can remove content, suspend accounts and resolve reports at `/admin`.
 
 ## Moving to production
 
-Status: the app still reads and writes `data/db.json`. The Postgres schema is ready and tested, but the app is not switched over.
-
-1. **Done:** `db/schema.sql` (v2) applies cleanly. `npm run db:check` loads real data (678 songs and 1,637 diary entries in the author's copy) into an embedded Postgres with nothing dropped, and the stats triggers match the app's numbers.
-2. **To do:** re-implement `store.ts` and `queries.ts` with async SQL (Drizzle or Prisma). The data layer is synchronous in-memory code used across about 27 files, so this touches nearly every page. The query function signatures are the contract the UI depends on. Do it behind a feature flag, one area at a time (reads first, then writes).
-3. **To do:** move sessions to Supabase Auth, Clerk or Auth.js (users have no email field yet, so email verification and password reset need this), and move the rate limiter to Redis or Upstash.
-4. Set `NEXT_PUBLIC_SITE_URL` and `NEXT_PUBLIC_CONTACT_EMAIL` at build time (see above).
+1. **Done:** Postgres backend (see "Using Postgres"). Run it with `DATA_BACKEND=postgres`; the JSON store stays available for small single-server setups and as the reference in tests.
+2. **To do:** move sessions to Supabase Auth, Clerk or Auth.js (users have no email field yet, so email verification and password reset need this), and move the rate limiter, import queue and metrics out of the instance (Redis or Postgres tables).
+3. Set `NEXT_PUBLIC_SITE_URL` and `NEXT_PUBLIC_CONTACT_EMAIL` at build time (see above).
 
 ## Not yet built
 

@@ -1,9 +1,9 @@
 -- MusicBox: PostgreSQL schema (v2). Mirrors src/lib/types.ts exactly.
 --
--- Status: verified by tests/postgres.test.ts, which applies this file to a real
--- Postgres (PGlite) and loads the full app data set into it. The app itself still
--- runs on the JSON store (src/lib/server/store.ts); moving the read/write layer
--- to this schema is the remaining step (see ROADMAP.md, Phase 0).
+-- This is the baseline. Changes after it live in db/migrations/ (applied in order by
+-- src/lib/server/sql/schema.ts and by npm run db:migrate); never edit this file once deployed.
+-- The app uses it when DATA_BACKEND=postgres. Verified by tests/postgres.test.ts and by the
+-- parity tests that compare every read and write with the JSON store.
 --
 -- Design notes
 --  • Primary keys are TEXT, the same ids the app already generates ("us1a2b…",

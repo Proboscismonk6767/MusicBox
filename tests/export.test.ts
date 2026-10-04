@@ -3,7 +3,8 @@ import { jar } from "./setup";
 import { getDB } from "@/lib/server/store";
 import { startSession } from "@/lib/server/auth";
 import { resetRateLimits } from "@/lib/server/ratelimit";
-import { exportUserData } from "@/lib/server/export";
+import { data as store } from "@/lib/server/data";
+import { state } from "./helpers/world";
 import { GET as exportRoute } from "@/app/api/account/export/route";
 
 const user = (username: string) => getDB().users.find((u) => u.username === username)!;
@@ -14,10 +15,10 @@ beforeEach(() => {
 });
 
 describe("data export", () => {
-  it("contains the user's own diary, ratings and lists", () => {
+  it("contains the user's own diary, ratings and lists", async () => {
     const u = user("maya");
-    const data = exportUserData(u.id)!;
-    const db = getDB();
+    const data = (await store.exportUserData(u.id))!;
+    const db = await state();
     expect(data.profile.username).toBe("maya");
     expect(data.diary.length).toBe(db.entries.filter((e) => e.userId === u.id && !e.removed).length);
     expect(data.ratings.length).toBe(db.ratings.filter((r) => r.userId === u.id).length);
@@ -25,13 +26,13 @@ describe("data export", () => {
     expect(data.diary[0].song).toMatchObject({ title: expect.any(String), artists: expect.any(Array) });
   });
 
-  it("never includes credentials, sessions or other people's content", () => {
+  it("never includes credentials, sessions or other people's content", async () => {
     const u = user("maya");
     const other = user("alex");
-    const json = JSON.stringify(exportUserData(u.id));
+    const json = JSON.stringify(await store.exportUserData(u.id));
     expect(json).not.toContain(u.passwordHash);
     expect(json).not.toMatch(/passwordHash|scrypt\$|tokenHash|sessions/);
-    const othersReview = getDB().entries.find((e) => e.userId === other.id && e.review && e.review.length > 20)!;
+    const othersReview = (await state()).entries.find((e) => e.userId === other.id && e.review && e.review.length > 20)!;
     expect(json).not.toContain(othersReview.review!);
     expect(json).not.toContain(other.id); // other users appear by username only
   });

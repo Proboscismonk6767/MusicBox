@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { getDB } from "@/lib/server/store";
+import { setListVisibility, setProfileVisibility } from "./helpers/world";
 import { artDataUrl, brandCard } from "@/lib/server/og";
 import ListImage from "@/app/list/[id]/opengraph-image";
 import ProfileImage from "@/app/[username]/opengraph-image";
@@ -23,11 +24,11 @@ describe("share images", () => {
     const priv = db.lists.find((l) => l.visibility === "private") ?? db.lists[0];
     const original = priv.visibility;
     for (const visibility of ["private", "unlisted"] as const) {
-      priv.visibility = visibility;
+      await setListVisibility(priv.id, visibility);
       const img = await bytes(await ListImage({ params: Promise.resolve({ id: priv.id }) }));
       expect(img.equals(brand), visibility).toBe(true);
     }
-    priv.visibility = original;
+    await setListVisibility(priv.id, original);
     const missing = await bytes(await ListImage({ params: Promise.resolve({ id: "does-not-exist" }) }));
     expect(missing.equals(brand)).toBe(true);
   });
@@ -36,9 +37,9 @@ describe("share images", () => {
     const u = getDB().users.find((x) => x.bio)!;
     const before = u.profileVisibility;
     const open = await bytes(await ProfileImage({ params: Promise.resolve({ username: u.username }) }));
-    u.profileVisibility = "private";
+    await setProfileVisibility(u.id, "private");
     const locked = await bytes(await ProfileImage({ params: Promise.resolve({ username: u.username }) }));
-    u.profileVisibility = before;
+    await setProfileVisibility(u.id, before);
     expect(locked.equals(open)).toBe(false);
     expect(locked.length).toBeLessThan(open.length); // name only: no bio line, no stats row
   });

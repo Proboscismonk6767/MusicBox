@@ -3,6 +3,7 @@ import zlib from "zlib";
 import { jar } from "./setup";
 import { aggregateHistory, ImportError, MAX_IMPORT_TRACKS, normalizeArtist, normalizeTitle, readZipJson } from "@/lib/spotify-import";
 import { getDB } from "@/lib/server/store";
+import { state } from "./helpers/world";
 import { startSession } from "@/lib/server/auth";
 import { importHistory, importWorkerIdle, findLocalSong, pickResult } from "@/lib/server/history-import";
 import { forgetUser, jobs, resetImportQueueForTests, statusFor } from "@/lib/server/import-queue";
@@ -142,20 +143,21 @@ describe("importing history", () => {
   it("adds songs MusicBox already has as one diary entry each, without feed activity", async () => {
     const { song, artist } = seeded();
     const u = user("ellis");
-    const before = getDB().entries.filter((e) => e.userId === u.id && e.songId === song.id && !e.removed).length;
-    const activityBefore = getDB().activity.length;
+    const before = (await state()).entries.filter((e) => e.userId === u.id && e.songId === song.id && !e.removed).length;
+    const activityBefore = (await state()).activity.length;
     expect(await findLocalSong({ t: `${song.title} - Remastered 2009`, a: artist })).toBe(song.id);
 
     const track = { t: song.title, a: artist, al: "x", p: 142, ms: 1e7, f: "2019-03-04", l: "2025-12-31" };
     const r1 = await importHistory(u.id, [track]);
     if (before) { expect(r1).toMatchObject({ added: 0, alreadyLogged: 1 }); return; }
     expect(r1).toMatchObject({ added: 1, queued: 0, alreadyLogged: 0 });
-    const e = getDB().entries.find((x) => x.userId === u.id && x.songId === song.id && x.tags.includes("spotify-import"))!;
+    const after = await state();
+    const e = after.entries.find((x) => x.userId === u.id && x.songId === song.id && x.tags.includes("spotify-import"))!;
     expect(e.listenedAt).toBe("2025-12-31");
     expect(e.memory).toBe("Played 142 times on Spotify, first in March 2019.");
     expect(e.rating).toBeUndefined();
-    expect(getDB().activity).toHaveLength(activityBefore);
-    expect(getDB().songStats[song.id].logCount).toBeGreaterThan(0);
+    expect(after.activity).toHaveLength(activityBefore);
+    expect(after.songStats[song.id].logCount).toBeGreaterThan(0);
 
     // Importing again changes nothing.
     expect(await importHistory(u.id, [track])).toMatchObject({ added: 0, alreadyLogged: 1 });
@@ -200,7 +202,7 @@ describe("importing history", () => {
 
     // Zebra Anthem needed one search; the album import then made "Second Stripe" a local match, so no second search.
     expect(calls.filter((c) => c.includes("/recording?"))).toHaveLength(2); // Zebra Anthem + the Ghost song
-    const db = getDB();
+    const db = await state();
     const mine = db.entries.filter((e) => e.userId === u.id && e.tags.includes("spotify-import"));
     expect(mine.map((e) => db.songs.find((s) => s.id === e.songId)!.title).sort()).toEqual(["Second Stripe", "Zebra Anthem"]);
     expect(statusFor(u.id)).toEqual({ active: false, total: 3, added: 2, pending: 0, notFound: 1, failed: 0, createdAt: expect.any(String) });

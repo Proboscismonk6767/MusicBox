@@ -10,6 +10,7 @@
     "artwork": "node scripts/fetch-artwork.mjs",
     "artist-images": "node scripts/fetch-artist-images.mjs",
     "test": "vitest run",
+    "test:postgres": "TEST_BACKEND=postgres vitest run",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "audit:prod": "npm audit --omit=dev --audit-level=high",

@@ -6,6 +6,7 @@ import path from "path";
 // Real data store in a throwaway directory; only Next's request context is faked.
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "musicbox-test-"));
 process.env.ADMIN_USERNAMES = "abtin";
+if (process.env.TEST_BACKEND === "postgres") process.env.DATA_BACKEND = "postgres"; // see tests/helpers/world.ts
 // Catalogue tests never touch the network and skip the public API's 1 req/s spacing.
 process.env.MUSICBRAINZ_MIN_INTERVAL_MS = "0";
 process.env.MUSICBRAINZ_CONTACT = "tests@example.com";

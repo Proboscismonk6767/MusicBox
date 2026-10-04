@@ -10,9 +10,24 @@ import { jsonCommands } from "./commands-json";
 export type Reads = typeof jsonReads;
 export type Async<T> = { [K in keyof T]: T[K] extends (...a: infer A) => infer R ? (...a: A) => Promise<Awaited<R>> : T[K] };
 
+const g = globalThis as unknown as { __mbSqlEngine?: Promise<{ reads: Async<Reads>; commands: Async<Commands> }> };
+
+/** The Postgres engine, built on first use so the JSON backend never loads a database driver. */
+function sqlEngine() {
+  return (g.__mbSqlEngine ??= (async () => {
+    const [{ getDb }, { createSqlReads }, { createSqlCommands }] = await Promise.all([import("./sql"), import("./sql/all-reads"), import("./sql/commands")]);
+    const db = await getDb();
+    return { reads: createSqlReads(db) as unknown as Async<Reads>, commands: createSqlCommands(db) as unknown as Async<Commands> };
+  })());
+}
+
+/** Tests: forget the cached Postgres engine (see resetDb in sql/index.ts). */
+export function resetSqlEngine() {
+  g.__mbSqlEngine = undefined;
+}
+
 async function engine(): Promise<Reads | Async<Reads>> {
-  if (backendName() === "postgres") throw new Error("The Postgres backend is not available yet.");
-  return jsonReads;
+  return backendName() === "postgres" ? (await sqlEngine()).reads : jsonReads;
 }
 
 export const data = new Proxy({} as Async<Reads>, {
@@ -23,8 +38,7 @@ export const data = new Proxy({} as Async<Reads>, {
 export type Commands = typeof jsonCommands;
 
 async function commandEngine(): Promise<Commands | Async<Commands>> {
-  if (backendName() === "postgres") throw new Error("The Postgres backend is not available yet.");
-  return jsonCommands;
+  return backendName() === "postgres" ? (await sqlEngine()).commands : jsonCommands;
 }
 
 export const commands = new Proxy({} as Async<Commands>, {

@@ -4,7 +4,7 @@ import { clearCatalogueCache } from "@/lib/server/catalogue-cache";
 import { musicbrainz, resetMusicbrainzLimiter } from "@/lib/server/musicbrainz";
 import { importAlbum, importTrack, MetadataError } from "@/lib/server/metadata";
 import { EXTERNAL_ID } from "@/lib/server/validation";
-import { getDB } from "@/lib/server/store";
+import { state } from "./helpers/world";
 
 // ── Fixtures shaped like real MusicBrainz responses ─────────────────────
 const RADIOHEAD = "a74b1b7f-71a5-4011-9441-d0b5e4122711";
@@ -247,7 +247,7 @@ describe("importing from MusicBrainz", () => {
     mockFetch(route);
     await musicbrainz.searchTracks("karma police", 8); // search results are what users open from
     await importTrack(`mb:${REC_STUDIO}`);
-    const db = getDB();
+    const db = await state();
     const album = db.albums.find((a) => a.externalId === `mb:${OKC_RG}`)!;
     expect(album.artworkUrl).toContain("coverartarchive.org");
     expect(db.artists.filter((a) => a.externalId === `mb:${RADIOHEAD}`)).toHaveLength(1);
@@ -257,6 +257,6 @@ describe("importing from MusicBrainz", () => {
     const before = db.songs.length;
     await importAlbum(`mb:${OKC_RG}`);
     await importTrack(`mb:${REC_STUDIO}`);
-    expect(getDB().songs.length).toBe(before);
+    expect((await state()).songs.length).toBe(before);
   });
 });

@@ -103,6 +103,13 @@ describe("SlotLimiter", () => {
     }
   });
 
+  it("lets a caller ask for a shorter wait than the limiter's own maximum", async () => {
+    const l = new SlotLimiter(1000, 60_000);
+    expect(await l.acquire(500)).toBe(true); // first caller never waits
+    expect(await l.acquire(500)).toBe(false); // next slot is 1000ms away
+    expect(l.backlogMs()).toBeLessThanOrEqual(1000);
+  });
+
   it("penalize() pushes later slots out", () => {
     const l = new SlotLimiter(1000, 60_000);
     l.penalize(5000);
@@ -186,6 +193,19 @@ describe("MusicBrainz provider", () => {
     expect(album).toHaveLength(2);
     expect(calls).toHaveLength(2);
     expect(calls[0].url).toContain(`release-group/${OKC_RG}`);
+  });
+
+  it("page-render lookups give up quickly while the catalogue is backed up, without calling out", async () => {
+    const calls = mockFetch(() => ({ status: 503, headers: { "retry-after": "30" } }));
+    await expect(musicbrainz.searchArtists("someone else")).rejects.toThrow(); // upstream says slow down
+    expect(calls).toHaveLength(1);
+    const { externalDiscography } = await import("@/lib/server/metadata");
+    const t = Date.now();
+    await expect(externalDiscography({ name: "Radiohead", externalId: `mb:${RADIOHEAD}` })).rejects.toThrow();
+    expect(Date.now() - t).toBeLessThan(500);
+    // the failure is remembered, so a crawler's repeat visit doesn't retry
+    await expect(externalDiscography({ name: "Radiohead", externalId: `mb:${RADIOHEAD}` })).rejects.toThrow(/temporarily/);
+    expect(calls).toHaveLength(1);
   });
 
   it("never builds requests from malformed ids", async () => {

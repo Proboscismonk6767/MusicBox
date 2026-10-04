@@ -8,7 +8,7 @@ import { safeExternalUrl, securityLog } from "./security";
 import { rateLimit } from "./ratelimit";
 import { metadataProviderName } from "./env";
 import { date, MetadataError, num, str, type ExternalAlbum, type ExternalArtist, type ExternalTrack, type MetadataProvider } from "./catalogue-core";
-import { musicbrainz } from "./musicbrainz";
+import { musicbrainz, withWaitBudget } from "./musicbrainz";
 import { cached } from "./catalogue-cache";
 
 export { MetadataError };
@@ -281,16 +281,35 @@ export async function importArtist(artistExternalId: string): Promise<string> {
   return artist.slug;
 }
 
-/** Provider discography for any artist (seeded or imported). */
+/** How long a page render will wait for the catalogue before showing the page without it. */
+const RENDER_WAIT_MS = 1500;
+/** After a failed lookup, don't retry the same artist for a while (stops crawlers hammering a busy catalogue). */
+const FAIL_MEMO_MS = 60_000;
+const gm = globalThis as unknown as { __discoFailures?: Map<string, number> };
+
+/** Provider discography for any artist (seeded or imported). Called while rendering artist pages,
+ *  so it gives up quickly instead of queueing behind other catalogue requests. */
 export async function externalDiscography(artist: { name: string; externalId?: string }): Promise<ExternalAlbum[]> {
-  let id = artist.externalId;
-  if (!id) {
-    const hits = await metadataProvider.searchArtists(artist.name, 5);
-    const hit = hits.find((h) => h.name.toLowerCase() === artist.name.toLowerCase());
-    if (!hit) return [];
-    id = hit.externalId;
+  const failures = (gm.__discoFailures ??= new Map());
+  const key = artist.externalId ?? artist.name.toLowerCase();
+  const until = failures.get(key);
+  if (until && until > Date.now()) throw new Error("Discography temporarily unavailable");
+  try {
+    return await withWaitBudget(RENDER_WAIT_MS, async () => {
+      let id = artist.externalId;
+      if (!id) {
+        const hits = await metadataProvider.searchArtists(artist.name, 5);
+        const hit = hits.find((h) => h.name.toLowerCase() === artist.name.toLowerCase());
+        if (!hit) return [];
+        id = hit.externalId;
+      }
+      return metadataProvider.getArtistAlbums(id);
+    });
+  } catch (e) {
+    if (failures.size > 500) failures.clear();
+    failures.set(key, Date.now() + FAIL_MEMO_MS);
+    throw e;
   }
-  return metadataProvider.getArtistAlbums(id);
 }
 
 /** Full external search for autocomplete/search page. `quick` (autocomplete) asks the

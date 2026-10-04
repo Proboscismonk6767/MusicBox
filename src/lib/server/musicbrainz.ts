@@ -1,6 +1,7 @@
 import "server-only";
 import { env } from "./env";
 import { securityLog, safeExternalUrl } from "./security";
+import { AsyncLocalStorage } from "async_hooks";
 import { SlotLimiter } from "./slot-limiter";
 import { cached, cacheGet, cacheSet } from "./catalogue-cache";
 import { date, MetadataError, num, str, titleCase, type ExternalAlbum, type ExternalArtist, type ExternalTrack, type MetadataProvider } from "./catalogue-core";
@@ -47,6 +48,11 @@ const limiter = () => (g.__mbLimiter ??= new SlotLimiter(env().MUSICBRAINZ_MIN_I
 
 const BUSY = "The music catalogue is busy. Try again in a minute.";
 
+/** Page renders can't queue behind the 1 request/second limit, or one crawler stalls every visitor.
+ *  Anything inside `withWaitBudget(ms, fn)` gives up if its turn is more than `ms` away. */
+const waitBudget = new AsyncLocalStorage<number>();
+export const withWaitBudget = <T>(ms: number, fn: () => Promise<T>): Promise<T> => waitBudget.run(ms, fn);
+
 /** Tests only: forget the request spacing state. */
 export function resetMusicbrainzLimiter() {
   g.__mbLimiter = undefined;
@@ -56,7 +62,7 @@ export function resetMusicbrainzLimiter() {
 async function mb<T>(pathAndQuery: string): Promise<T | null> {
   const base = (env().MUSICBRAINZ_URL ?? "https://musicbrainz.org/ws/2").replace(/\/$/, "");
   const url = `${base}/${pathAndQuery}${pathAndQuery.includes("?") ? "&" : "?"}fmt=json`;
-  if (!(await limiter().acquire())) {
+  if (!(await limiter().acquire(waitBudget.getStore()))) {
     securityLog("ratelimit.exceeded", { action: "catalogue_outbound" });
     throw new MetadataError(BUSY);
   }

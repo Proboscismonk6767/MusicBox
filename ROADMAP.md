@@ -1,6 +1,6 @@
 # MusicBox Roadmap: from demo to massive
 
-_Written 2026-10-04 against the current codebase (~9k lines, Next.js 15, JSON-file store, iTunes Search for catalogue)._
+_Written 2026-10-04 against the codebase at the time (~9k lines, Next.js 15, JSON-file store, iTunes Search for catalogue). Progress is tracked in "Status" below._
 
 ## The bet
 
@@ -14,13 +14,29 @@ Letterboxd didn't win by having a bigger film database than IMDb. It won because
 
 The product surface is already wide: diary, ratings, reviews, lists, follows, recommendations, taste compatibility, year in review, moderation. **What's missing is not features. It's a foundation that can survive traffic, and a way for strangers to arrive and stay.** So the order is: foundation, then acquisition, then retention, then monetisation.
 
-## Where you are today (honest assessment)
+## Status (updated 2026-10-04)
+
+| Item | State |
+| --- | --- |
+| Catalogue moved to MusicBrainz + Cover Art Archive, with disk cache and request limiter | Done. Checked against the live service; page renders give up after 1.5 s instead of queueing |
+| Spotify extended-history import | Done (`/settings/import`) |
+| Per-page share images | Done (song, album, artist, review, list, profile, year in review) |
+| Data export | Done (Settings, Download everything) |
+| Terms, Privacy, Copyright pages | Drafted. Need a lawyer's review, then `NEXT_PUBLIC_LEGAL_REVIEWED=true` |
+| Error webhook, `/api/health`, daily event counts | Done. Sentry and PostHog themselves are not set up |
+| Postgres schema v2 and migration check | Done (`npm run db:check`) |
+| **Postgres cutover** | **Not done.** Multi-day port of the synchronous data layer. This now blocks scaling past one process |
+| Email verification, password reset, Apple/Google sign-in | Not done. Needs an email field on users, plus accounts and keys only the owner can create |
+| Load test | Script added (`npm run loadtest`). Artist pages fixed (p95 4 s down to about 1 s). Single-process ceiling is about 67 req/s, so the Phase 0 exit target (p95 under 500 ms at 1k concurrent users) needs Postgres and several instances |
+| Last.fm import, backups restored once, MusicBrainz mirror | Not done |
+
+## Where you were at the start (honest assessment)
 
 | Area | State | Why it matters |
 | --- | --- | --- |
 | Product breadth | Strong | Diary, reviews, lists, stats, compatibility, year in review all exist |
 | Persistence | `data/db.json` with in-memory indexes rebuilt after writes | Fine for a demo; breaks at a few hundred users (single process, whole-file writes, no concurrency) |
-| Catalogue | iTunes Search API, ~20 req/min per IP, imports on open | One busy minute exhausts the quota. This is the first thing that breaks |
+| Catalogue | iTunes Search API, ~20 req/min per IP, imports on open (now replaced, see Status) | One busy minute exhausts the quota. This was the first thing to break |
 | Auth | Home-grown sessions + scrypt | Works, but no email verification, password reset, OAuth, or 2FA |
 | Onboarding | Taste picker; Spotify import is a placeholder | No imported history means empty profiles and no reason to stay |
 | Distribution | Web only, share card for year in review | No mobile app, no embeds, no per-page OG images |
@@ -125,13 +141,15 @@ Don't monetise until the habit exists. Ranked by fit with the product:
 
 ## The next 10 things to do
 
-1. Stand up Postgres and port `store.ts`/`queries.ts` (feature-flag it).
-2. Swap the primary catalogue to MusicBrainz + Cover Art Archive with a persistent cache and queue.
-3. Add email verification, password reset, and Apple/Google sign-in.
-4. Add Sentry, uptime monitoring, PostHog and a tested backup.
-5. Write Terms, Privacy and a DMCA policy.
-6. Build the Spotify extended-history ZIP importer, then Last.fm.
-7. Add per-page OG images and make Year in Review beautiful and one-tap shareable (target: live by late November).
-8. Run a load test and fix the top three bottlenecks.
-9. Recruit the first 50–100 music writers/curators privately.
-10. Launch publicly with a Wrapped-season campaign: "Your year in songs, and what they meant."
+Done: 2 (catalogue), 5 (legal pages drafted), 6 (Spotify importer), 7 (share images; polish Year in Review before late November), 8 (load test run and the worst bottleneck fixed). Partly done: 4 (health check, error webhook and metrics exist; Sentry, PostHog and a restored backup do not).
+
+1. **Port `store.ts` and `queries.ts` to Postgres** (feature-flag it). This is now the main blocker.
+2. Email verification, password reset, and Apple/Google sign-in. Add an email field first.
+3. Finish Phase 0 ops: Sentry, uptime monitoring, PostHog, a backup you have restored once, and a MusicBrainz mirror.
+4. Get the legal pages reviewed, then set `NEXT_PUBLIC_LEGAL_REVIEWED=true`.
+5. Build the Last.fm importer.
+6. Make Year in Review beautiful and one-tap shareable (live by late November).
+7. Re-run the load test after the Postgres port with several instances. Target p95 under 500 ms.
+8. Recruit the first 50–100 music writers and curators privately.
+9. Launch publicly with a Wrapped-season campaign: "Your year in songs, and what they meant."
+10. Check current Apple, Spotify and MusicBrainz commercial terms before depending on any provider.

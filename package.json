@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "audit:prod": "npm audit --omit=dev --audit-level=high",
+    "loadtest": "node scripts/loadtest.mjs",
     "db:check": "node scripts/migrate-to-postgres.mjs --dry-run",
     "db:migrate": "node scripts/migrate-to-postgres.mjs"
   },

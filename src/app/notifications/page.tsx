@@ -1,13 +1,12 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getViewer } from "@/lib/server/auth";
-import { getNotifications } from "@/lib/server/queries";
+import { data } from "@/lib/server/data";
 import { Artwork } from "@/components/Artwork";
 import { Avatar, EmptyState, Icon } from "@/components/ui";
 import { FollowButton } from "@/components/social";
 import { timeAgo } from "@/lib/format";
 import { MarkRead } from "./MarkRead";
-import { idx } from "@/lib/server/indexes";
 
 export const metadata = { title: "Notifications" };
 export const dynamic = "force-dynamic";
@@ -25,8 +24,8 @@ const COPY: Record<string, [string, string]> = {
 export default async function NotificationsPage() {
   const viewer = await getViewer();
   if (!viewer) redirect("/login?next=/notifications");
-  const items = getNotifications(viewer.id);
-  const following = idx().following.get(viewer.id) ?? new Set();
+  const items = await data.getNotifications(viewer.id);
+  const following = new Set(await data.followingIds(viewer.id));
   const unread = items.filter((n) => !n.readAt).length;
   return (
     <div className="max-w-2xl">

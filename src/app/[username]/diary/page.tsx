@@ -2,12 +2,13 @@ import { safeDecode } from "@/lib/util";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getViewer } from "@/lib/server/auth";
-import { getDiary, getProfile, type DiaryFilters } from "@/lib/server/queries";
+import { type DiaryFilters } from "@/lib/server/queries";
 import { Artwork } from "@/components/Artwork";
 import { EmptyState, Icon, Stars } from "@/components/ui";
 import { MONTH_NAMES } from "@/lib/format";
 import { DiaryFilterBar } from "./DiaryFilterBar";
 import { EntryActions } from "./EntryActions";
+import { data } from "@/lib/server/data";
 
 export const metadata = { title: "Diary" };
 
@@ -15,10 +16,10 @@ export default async function DiaryPage({ params, searchParams }: { params: Prom
   const { username } = await params;
   const filters = await searchParams;
   const viewer = await getViewer();
-  const p = getProfile(safeDecode(username), viewer?.id);
+  const p = await data.getProfile(safeDecode(username), viewer?.id);
   if (!p) notFound();
   if (!p.canView) return null;
-  const d = getDiary(p.raw, filters, viewer?.id);
+  const d = await data.getDiary(p.raw, filters, viewer?.id);
   const active = Object.values(filters).some(Boolean);
 
   // Group by month for the editorial date column.

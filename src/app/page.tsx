@@ -1,8 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getViewer } from "@/lib/server/auth";
-import { friendsFavourites, getFeed, popularLists, recentReviews, suggestedUsers, trendingSongs, catalogueSize, artworkWall, viewerStates, getUserByName } from "@/lib/server/queries";
-import { recommendations } from "@/lib/server/insights";
 import { Feed } from "@/components/Feed";
 import { Artwork, Collage } from "@/components/Artwork";
 import { ListCardView, MiniSong } from "@/components/cards";
@@ -11,22 +9,23 @@ import { FollowButton, ReviewCard } from "@/components/social";
 import { Avatar, Icon, SectionHeader, Stars } from "@/components/ui";
 import { Logo } from "@/components/Shell";
 import { demoDataEnabled } from "@/lib/server/env";
+import { data } from "@/lib/server/data";
 
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
   const viewer = await getViewer();
   if (!viewer) return <Landing />;
-  const full = getUserByName(viewer.username);
+  const full = await data.getUserByName(viewer.username);
   if (full && !full.onboarded) redirect("/onboarding");
 
-  const { items, next } = getFeed(viewer.id);
-  const trending = trendingSongs(8);
-  const favs = friendsFavourites(viewer.id, 5);
-  const people = suggestedUsers(viewer.id, 4);
-  const lists = popularLists(3, viewer.id);
-  const recs = recommendations(viewer.id, 6);
-  const states = viewerStates(recs.map((r) => r.song.id), viewer.id);
+  const { items, next } = await data.getFeed(viewer.id);
+  const trending = await data.trendingSongs(8);
+  const favs = await data.friendsFavourites(viewer.id, 5);
+  const people = await data.suggestedUsers(viewer.id, 4);
+  const lists = await data.popularLists(3, viewer.id);
+  const recs = await data.recommendations(viewer.id, 6);
+  const states = await data.viewerStates(recs.map((r) => r.song.id), viewer.id);
 
   return (
     <div className="grid lg:grid-cols-[minmax(0,1fr)_300px] gap-10">
@@ -106,13 +105,13 @@ export default async function Home() {
 
 // ── Logged-out landing (§27) ────────────────────────────────────────────
 
-function Landing() {
+async function Landing() {
   const showDemo = demoDataEnabled();
-  const trending = trendingSongs(18);
-  const wall = artworkWall(72);
-  const reviews = recentReviews(4);
-  const lists = popularLists(4);
-  const size = catalogueSize();
+  const trending = await data.trendingSongs(18);
+  const wall = await data.artworkWall(72);
+  const reviews = await data.recentReviews(4);
+  const lists = await data.popularLists(4);
+  const size = await data.catalogueSize();
   return (
     <div className="min-h-dvh">
       <header className="absolute top-0 inset-x-0 z-20">

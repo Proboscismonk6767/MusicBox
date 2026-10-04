@@ -2,16 +2,16 @@ import { safeDecode } from "@/lib/util";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getViewer } from "@/lib/server/auth";
-import { getFollowList, getProfile } from "@/lib/server/queries";
 import { Avatar, EmptyState } from "./ui";
 import { FollowButton } from "./social";
+import { data } from "@/lib/server/data";
 
 export async function FollowListPage({ username, kind }: { username: string; kind: "followers" | "following" }) {
   const viewer = await getViewer();
-  const p = getProfile(safeDecode(username), viewer?.id);
+  const p = await data.getProfile(safeDecode(username), viewer?.id);
   if (!p) notFound();
   if (!p.canView) return null;
-  const users = getFollowList(p.raw, kind, viewer?.id);
+  const users = await data.getFollowList(p.raw, kind, viewer?.id);
   return (
     <div className="max-w-2xl">
       <div className="flex gap-4 mb-4 text-sm">

@@ -2,14 +2,13 @@ import { safeDecode } from "@/lib/util";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getViewer } from "@/lib/server/auth";
-import { getProfile } from "@/lib/server/queries";
-import { userStats } from "@/lib/server/insights";
 import { BarList, BigStat, Columns, Heatmap } from "@/components/charts";
 import { Histogram } from "@/components/cards";
 import { Artwork } from "@/components/Artwork";
 import { EmptyState, SectionHeader, Stars } from "@/components/ui";
 import { monthShort } from "@/lib/format";
 import { slugify } from "@/lib/util";
+import { data } from "@/lib/server/data";
 
 export const metadata = { title: "Stats" };
 
@@ -17,11 +16,11 @@ export default async function StatsPage({ params, searchParams }: { params: Prom
   const { username } = await params;
   const { year: y } = await searchParams;
   const viewer = await getViewer();
-  const p = getProfile(safeDecode(username), viewer?.id);
+  const p = await data.getProfile(safeDecode(username), viewer?.id);
   if (!p) notFound();
   if (!p.canView) return null;
   const year = y === "all" ? undefined : Number(y) || new Date().getFullYear();
-  const s = userStats(p.raw.id, year);
+  const s = await data.userStats(p.raw.id, year);
   const heatYear = year ?? s.years[0] ?? new Date().getFullYear();
 
   return (

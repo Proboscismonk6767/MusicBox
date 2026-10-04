@@ -344,7 +344,7 @@ function uniqueSlug(rows: { slug: string }[], base: string) {
 const norm = (s: string) => s.toLowerCase().replace(/\(.*?\)|\[.*?\]/g, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 
 /** A 30-second Apple preview clip for any catalogue song (stored URL first, else an iTunes lookup). Cached on disk. */
-export async function findPreviewUrl(song: Song, artistName: string): Promise<string | null> {
+export async function findPreviewUrl(song: Pick<Song, "id" | "title" | "durationMs" | "previewUrl">, artistName: string): Promise<string | null> {
   if (song.previewUrl) return song.previewUrl;
   return cached(`preview:${song.id}`, 30 * 86_400_000, async () => {
     const term = encodeURIComponent(`${song.title} ${artistName}`.slice(0, 120));

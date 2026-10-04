@@ -2,9 +2,9 @@ import { safeDecode } from "@/lib/util";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getViewer } from "@/lib/server/auth";
-import { getProfile, getUserReviews } from "@/lib/server/queries";
 import { ReviewCard } from "@/components/social";
 import { EmptyState } from "@/components/ui";
+import { data } from "@/lib/server/data";
 
 export const metadata = { title: "Reviews" };
 
@@ -12,10 +12,10 @@ export default async function ReviewsPage({ params, searchParams }: { params: Pr
   const { username } = await params;
   const { sort = "recent" } = await searchParams;
   const viewer = await getViewer();
-  const p = getProfile(safeDecode(username), viewer?.id);
+  const p = await data.getProfile(safeDecode(username), viewer?.id);
   if (!p) notFound();
   if (!p.canView) return null;
-  const reviews = getUserReviews(p.raw, sort, viewer?.id);
+  const reviews = await data.getUserReviews(p.raw, sort, viewer?.id);
   return (
     <div className="max-w-3xl">
       <div className="flex items-end justify-between mb-4">

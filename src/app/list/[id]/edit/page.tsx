@@ -1,7 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { getViewer } from "@/lib/server/auth";
-import { getListPage } from "@/lib/server/queries";
 import { ListEditor } from "@/components/ListEditor";
+import { data } from "@/lib/server/data";
 
 export const metadata = { title: "Edit list" };
 
@@ -9,7 +9,7 @@ export default async function EditListPage({ params }: { params: Promise<{ id: s
   const { id } = await params;
   const viewer = await getViewer();
   if (!viewer) redirect(`/login?next=/list/${id}/edit`);
-  const p = getListPage(id, viewer.id);
+  const p = await data.getListPage(id, viewer.id);
   if (!p) notFound();
   if (!p.isOwner) redirect(`/list/${id}`);
   const { list } = p;

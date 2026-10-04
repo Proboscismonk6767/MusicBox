@@ -1,16 +1,16 @@
 import Link from "next/link";
 import { getViewer } from "@/lib/server/auth";
-import { browseLists, getUserLists, getUserByName } from "@/lib/server/queries";
 import { ListCardView } from "@/components/cards";
 import { Icon, SectionHeader } from "@/components/ui";
+import { data } from "@/lib/server/data";
 
 export const metadata = { title: "Lists", description: "Ranked and curated song lists from the MusicBox community." };
 
 export default async function ListsPage({ searchParams }: { searchParams: Promise<{ sort?: string }> }) {
   const { sort = "popular" } = await searchParams;
   const viewer = await getViewer();
-  const mine = viewer ? getUserLists(getUserByName(viewer.username)!, viewer.id) : [];
-  const lists = browseLists(sort, viewer?.id);
+  const mine = viewer ? await data.getUserLists((await data.getUserByName(viewer.username))!, viewer.id) : [];
+  const lists = await data.browseLists(sort, viewer?.id);
   return (
     <div className="space-y-12">
       <header className="flex flex-wrap items-end justify-between gap-4">

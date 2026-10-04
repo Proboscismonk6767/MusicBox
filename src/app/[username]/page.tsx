@@ -2,22 +2,22 @@ import { safeDecode } from "@/lib/util";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getViewer } from "@/lib/server/auth";
-import { getProfile, profileOverview, viewerStates } from "@/lib/server/queries";
 import { Artwork } from "@/components/Artwork";
 import { ArtistBubble, Histogram, ListCardView } from "@/components/cards";
 import { ReviewCard } from "@/components/social";
 import { EmptyState, Icon, SectionHeader, Stars } from "@/components/ui";
 import { SongTile } from "@/components/song-controls";
 import { FavouritesEditor } from "./FavouritesEditor";
+import { data } from "@/lib/server/data";
 
 export default async function ProfilePage({ params }: { params: Promise<{ username: string }> }) {
   const { username } = await params;
   const viewer = await getViewer();
-  const p = getProfile(safeDecode(username), viewer?.id);
+  const p = await data.getProfile(safeDecode(username), viewer?.id);
   if (!p) notFound();
   if (!p.canView) return null;
-  const o = profileOverview(p.raw, viewer?.id);
-  const states = viewerStates(o.favourites.map((s) => s.id), viewer?.id);
+  const o = await data.profileOverview(p.raw, viewer?.id);
+  const states = await data.viewerStates(o.favourites.map((s) => s.id), viewer?.id);
   const avg = o.ratingCount ? o.histogram.reduce((a, n, i) => a + (n * (i + 1)) / 2, 0) / o.ratingCount : 0;
 
   return (

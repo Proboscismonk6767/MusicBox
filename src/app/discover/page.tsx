@@ -1,30 +1,29 @@
 import Link from "next/link";
 import { getViewer } from "@/lib/server/auth";
-import { allGenres, friendsListening, hiddenGems, highlyRated, newReleases, popularLists, trendingReviews, trendingSongs, viewerStates, suggestedUsers } from "@/lib/server/queries";
-import { becauseYouLike, recommendations } from "@/lib/server/insights";
 import { ListCardView } from "@/components/cards";
 import { SongTile } from "@/components/song-controls";
 import { FollowButton, ReviewCard } from "@/components/social";
 import { Avatar, SectionHeader, Stars } from "@/components/ui";
 import type { SongCard } from "@/lib/views";
+import { data } from "@/lib/server/data";
 
 export const metadata = { title: "Discover", description: "Popular, highly rated and hidden-gem songs on MusicBox." };
 export const dynamic = "force-dynamic";
 
 export default async function DiscoverPage() {
   const viewer = await getViewer();
-  const trending = trendingSongs(12);
-  const top = highlyRated(12);
-  const gems = hiddenGems(12);
-  const fresh = newReleases(12);
-  const reviews = trendingReviews(6, viewer?.id);
-  const lists = popularLists(6, viewer?.id);
-  const friends = viewer ? friendsListening(viewer.id, 12) : [];
-  const recs = viewer ? recommendations(viewer.id, 12) : [];
-  const because = viewer ? becauseYouLike(viewer.id) : null;
-  const people = suggestedUsers(viewer?.id, 6);
+  const trending = await data.trendingSongs(12);
+  const top = await data.highlyRated(12);
+  const gems = await data.hiddenGems(12);
+  const fresh = await data.newReleases(12);
+  const reviews = await data.trendingReviews(6, viewer?.id);
+  const lists = await data.popularLists(6, viewer?.id);
+  const friends = viewer ? await data.friendsListening(viewer.id, 12) : [];
+  const recs = viewer ? await data.recommendations(viewer.id, 12) : [];
+  const because = viewer ? await data.becauseYouLike(viewer.id) : null;
+  const people = await data.suggestedUsers(viewer?.id, 6);
   const all: SongCard[] = [...trending, ...top, ...gems, ...fresh, ...friends.map((f) => f.song), ...recs.map((r) => r.song), ...(because?.songs ?? [])];
-  const states = viewerStates([...new Set(all.map((s) => s.id))], viewer?.id);
+  const states = await data.viewerStates([...new Set(all.map((s) => s.id))], viewer?.id);
   const row = (songs: SongCard[], sub?: (s: SongCard, i: number) => React.ReactNode) => (
     <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-3">
       {songs.slice(0, 12).map((s, i) => <SongTile key={s.id} song={s} state={states[s.id]} sub={sub?.(s, i)} />)}
@@ -37,7 +36,7 @@ export default async function DiscoverPage() {
         <h1 className="display text-4xl md:text-6xl">Discover</h1>
         <p className="text-muted mt-2">Songs moving through the community right now — and a few you might have missed.</p>
         <div className="flex flex-wrap gap-1.5 mt-5">
-          {allGenres().slice(0, 16).map((g) => <Link key={g.slug} href={`/genre/${g.slug}`} className="chip">{g.name}</Link>)}
+          {(await data.allGenres()).slice(0, 16).map((g) => <Link key={g.slug} href={`/genre/${g.slug}`} className="chip">{g.name}</Link>)}
         </div>
       </header>
 

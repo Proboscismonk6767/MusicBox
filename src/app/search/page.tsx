@@ -1,20 +1,20 @@
 import Link from "next/link";
 import { getViewer } from "@/lib/server/auth";
-import { search, viewerStates, allGenres } from "@/lib/server/queries";
 import { ArtistBubble, ListCardView } from "@/components/cards";
 import { SongRow } from "@/components/song-controls";
 import { Artwork } from "@/components/Artwork";
 import { Avatar, SectionHeader } from "@/components/ui";
 import { SearchBox } from "@/components/SearchBox";
 import { ExternalResults } from "./ExternalResults";
+import { data } from "@/lib/server/data";
 
 export const metadata = { title: "Search" };
 
 export default async function SearchPage({ searchParams }: { searchParams: Promise<{ q?: string; error?: string }> }) {
   const { q = "", error } = await searchParams;
   const viewer = await getViewer();
-  const r = q ? search(q, 20, viewer?.id) : null;
-  const states = r ? viewerStates(r.songs.map((s) => s.id), viewer?.id) : {};
+  const r = q ? await data.search(q, 20, viewer?.id) : null;
+  const states = r ? await data.viewerStates(r.songs.map((s) => s.id), viewer?.id) : {};
   const total = r ? r.songs.length + r.artists.length + r.albums.length + r.users.length + r.lists.length : 0;
   return (
     <div className="max-w-5xl">
@@ -25,7 +25,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
         <div>
           <p className="text-muted mb-6">Search every song, artist and album in the world — plus people and lists on MusicBox. Tip: press <kbd className="border border-line rounded px-1 text-xs">/</kbd> anywhere to search.</p>
           <SectionHeader title="Browse by genre" />
-          <div className="flex flex-wrap gap-2">{allGenres().map((g) => <Link key={g.slug} href={`/genre/${g.slug}`} className="chip">{g.name} <span className="text-faint">{g.count}</span></Link>)}</div>
+          <div className="flex flex-wrap gap-2">{(await data.allGenres()).map((g) => <Link key={g.slug} href={`/genre/${g.slug}`} className="chip">{g.name} <span className="text-faint">{g.count}</span></Link>)}</div>
         </div>
       )}
       {r && (

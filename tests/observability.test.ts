@@ -108,7 +108,7 @@ describe("error reporting", () => {
 
 describe("health", () => {
   it("answers 200 when the store loads", async () => {
-    const res = health();
+    const res = await health();
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
   });

@@ -1,6 +1,5 @@
-import { getProfile } from "@/lib/server/queries";
-import { yearInReview } from "@/lib/server/insights";
 import { artDataUrl, brandCard, plural, renderCard } from "@/lib/server/og";
+import { data } from "@/lib/server/data";
 
 export const alt = "Year in music on MusicBox";
 export const size = { width: 1200, height: 630 };
@@ -9,9 +8,9 @@ export const contentType = "image/png";
 export default async function Image({ params }: { params: Promise<{ username: string; year: string }> }) {
   const { username, year: ys } = await params;
   const year = Number(ys);
-  const p = getProfile(decodeURIComponent(username));
+  const p = await data.getProfile(decodeURIComponent(username));
   if (!p || !p.canView || !Number.isInteger(year)) return brandCard();
-  const y = yearInReview(p.raw.id, year);
+  const y = await data.yearInReview(p.raw.id, year);
   if (!y.logged) return brandCard();
   const top = y.topSongs[0];
   return renderCard({

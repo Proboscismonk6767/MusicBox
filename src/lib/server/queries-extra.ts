@@ -1,6 +1,8 @@
 import "server-only";
 import { idx } from "./indexes";
 import { songCard, suggestedUsers } from "./queries";
+import { normalizeArtist, normalizeTitle } from "../spotify-import";
+import type { Song } from "../types";
 
 
 // Small reads for pages and routes that used to reach into the store directly.
@@ -95,3 +97,68 @@ export function ping(): true {
   return true;
 }
 
+
+// ── Catalogue lookups used when importing from the world catalogue ──────
+
+export function songSlugByExternalId(externalId: string): string | undefined {
+  return idx().db.songs.find((s) => s.externalId === externalId)?.slug;
+}
+
+export function songIdBySlug(slug: string): string | undefined {
+  return idx().songBySlug.get(slug)?.id;
+}
+
+export function albumByExternalId(externalId: string): { slug: string; songCount: number } | null {
+  const i = idx();
+  const a = i.db.albums.find((x) => x.externalId === externalId);
+  return a ? { slug: a.slug, songCount: i.songsByAlbum.get(a.id)?.length ?? 0 } : null;
+}
+
+/** Finds an artist by catalogue id, or (when none matches) by exact name, ignoring case. */
+export function artistLookup(q: { externalId?: string; name?: string }): { id: string; slug: string; externalId?: string } | null {
+  const artists = idx().db.artists;
+  const a = (q.externalId && artists.find((x) => x.externalId === q.externalId)) || (q.name && artists.find((x) => x.name.toLowerCase() === q.name!.toLowerCase())) || null;
+  return a ? { id: a.id, slug: a.slug, externalId: a.externalId } : null;
+}
+
+/** Which of these catalogue results does MusicBox already have? (by catalogue id, or by title and artist) */
+export function knownTracks(tracks: { externalId: string; title: string; artist: string }[]): boolean[] {
+  const i = idx();
+  const known = new Set(i.db.songs.map((s) => s.externalId).filter(Boolean));
+  const titles = new Set(i.db.songs.map((s) => `${s.title.toLowerCase()}|${i.artist.get(s.artistIds[0])?.name.toLowerCase()}`));
+  return tracks.map((t) => known.has(t.externalId) || titles.has(`${t.title.toLowerCase()}|${t.artist.toLowerCase()}`));
+}
+
+/** The subset of these artist names MusicBox already has (lower-cased). */
+export function knownArtistNames(names: string[]): string[] {
+  const have = new Set(idx().db.artists.map((a) => a.name.toLowerCase()));
+  return names.map((n) => n.toLowerCase()).filter((n) => have.has(n));
+}
+
+/** The subset of these catalogue album ids MusicBox already has. */
+export function knownAlbumIds(externalIds: string[]): string[] {
+  const have = new Set(idx().db.albums.map((a) => a.externalId).filter(Boolean));
+  return externalIds.filter((id) => have.has(id));
+}
+
+// ── Listening-history import ────────────────────────────────────────────
+
+/** For each track the user played, the id of the matching song MusicBox already has (same title and artist), or null. */
+export function findLocalSongs(tracks: { t: string; a: string }[]): (string | null)[] {
+  const i = idx();
+  const byTitle = new Map<string, Song[]>();
+  for (const s of i.db.songs) {
+    const k = normalizeTitle(s.title);
+    const list = byTitle.get(k);
+    if (list) list.push(s); else byTitle.set(k, [s]);
+  }
+  return tracks.map((t) => {
+    const artist = normalizeArtist(t.a);
+    const hit = byTitle.get(normalizeTitle(t.t))?.find((s) => [...s.artistIds.map((id) => i.artist.get(id)?.name ?? ""), ...s.featured].filter(Boolean).map(normalizeArtist).includes(artist));
+    return hit?.id ?? null;
+  });
+}
+
+export function userActive(userId: string): boolean {
+  return idx().db.users.some((u) => u.id === userId && !u.suspended);
+}

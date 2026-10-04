@@ -1,13 +1,11 @@
 import "server-only";
 import { z } from "zod";
-import type { DB, DiaryEntry, Song } from "../types";
-import { getRev, mutate } from "./store";
-import { idx } from "./indexes";
-import { recomputeSongStats } from "./stats";
+import { data, commands } from "./data";
+import type { ImportedEntry } from "./commands-types";
 import { importTrack, metadataProvider, MetadataError, type ExternalTrack } from "./metadata";
 import { enqueue, finishIfDone, forgetUser, jobs, nextPending, save, type QueueItem } from "./import-queue";
 import { MAX_IMPORT_TRACKS, normalizeArtist, normalizeTitle, type ImportTrack } from "../spotify-import";
-import { newId, todayISO } from "../util";
+import { todayISO } from "../util";
 import { track } from "./metrics";
 import { reportError } from "./monitoring";
 
@@ -46,29 +44,9 @@ export const historyPayload = z
 
 // ── Matching against what MusicBox already has ──────────────────────────
 
-let titleIndex: { rev: number; songs: Map<string, Song[]> } | null = null;
-
-function localSongs(): Map<string, Song[]> {
-  const rev = getRev();
-  if (titleIndex?.rev === rev) return titleIndex.songs;
-  const songs = new Map<string, Song[]>();
-  for (const s of idx().db.songs) {
-    const k = normalizeTitle(s.title);
-    const list = songs.get(k);
-    if (list) list.push(s); else songs.set(k, [s]);
-  }
-  titleIndex = { rev, songs };
-  return songs;
-}
-
-function artistNames(s: Song): string[] {
-  const i = idx();
-  return [...s.artistIds.map((id) => i.artist.get(id)?.name ?? ""), ...s.featured].filter(Boolean).map(normalizeArtist);
-}
-
-export function findLocalSong(t: Pick<ImportTrack, "t" | "a">): Song | undefined {
-  const artist = normalizeArtist(t.a);
-  return localSongs().get(normalizeTitle(t.t))?.find((s) => artistNames(s).includes(artist));
+/** The song MusicBox already has for this track (same title and artist), if any. */
+export async function findLocalSong(t: Pick<ImportTrack, "t" | "a">): Promise<string | undefined> {
+  return (await data.findLocalSongs([t]))[0] ?? undefined;
 }
 
 /** Pick the catalogue result that really is this track (same title and artist), not just a near match. */
@@ -86,33 +64,21 @@ function memoryFor(t: ImportTrack): string {
   return `${plays}, first in ${first}.`;
 }
 
-/** Adds the diary entry unless the user already has one for this song. Call inside mutate(). */
-function addEntry(db: DB, userId: string, songId: string, t: ImportTrack): boolean {
-  if (db.entries.some((e) => e.userId === userId && e.songId === songId && !e.removed)) return false;
-  const at = new Date().toISOString();
-  const entry: DiaryEntry = {
-    id: newId("en"), userId, songId, liked: false, listenedAt: t.l > todayISO() ? todayISO() : t.l, isRelisten: false,
-    tags: [IMPORT_TAG], memory: memoryFor(t), createdAt: at, updatedAt: at,
-  };
-  db.entries.push(entry);
-  recomputeSongStats(db, songId);
-  return true;
-}
+const entryFor = (songId: string, t: ImportTrack): ImportedEntry => ({
+  songId, listenedAt: t.l > todayISO() ? todayISO() : t.l, tags: [IMPORT_TAG], memory: memoryFor(t),
+});
 
 export interface ImportResult { added: number; queued: number; alreadyLogged: number }
 
 /** Entry point for the API route (payload already validated). */
-export function importHistory(userId: string, tracks: ImportTrack[]): ImportResult {
+export async function importHistory(userId: string, tracks: ImportTrack[]): Promise<ImportResult> {
+  const songIds = await data.findLocalSongs(tracks);
   const unmatched: ImportTrack[] = [];
-  let added = 0;
-  let alreadyLogged = 0;
-  mutate((db) => {
-    for (const t of tracks) {
-      const song = findLocalSong(t);
-      if (!song) { unmatched.push(t); continue; }
-      if (addEntry(db, userId, song.id, t)) added++; else alreadyLogged++;
-    }
-  });
+  const matched: { track: ImportTrack; songId: string }[] = [];
+  tracks.forEach((t, n) => { const id = songIds[n]; if (id) matched.push({ track: t, songId: id }); else unmatched.push(t); });
+  const written = await commands.addImportedEntries(userId, matched.map((m) => entryFor(m.songId, m.track)));
+  const added = written.filter(Boolean).length;
+  const alreadyLogged = written.length - added;
   track("import_started");
   if (unmatched.length || added) enqueue(userId, unmatched, added);
   if (unmatched.length) kickImportWorker(); else track("import_completed");
@@ -126,16 +92,15 @@ const g = globalThis as unknown as { __importWorker?: Promise<void> };
 
 /** Resolve one track and add it to the diary. Returns true when a new entry was written. */
 async function resolve(userId: string, item: QueueItem): Promise<boolean> {
-  let song = findLocalSong(item);
-  if (!song) {
+  let songId = await findLocalSong(item);
+  if (!songId) {
     const hit = pickResult(await metadataProvider.searchTracks(`${normalizeTitle(item.t)} ${normalizeArtist(item.a)}`, 10), item);
     if (!hit) { item.state = "missed"; return false; }
     const slug = await importTrack(hit.externalId);
-    song = idx().db.songs.find((s) => s.slug === slug);
-    if (!song) { item.state = "failed"; return false; }
+    songId = await data.songIdBySlug(slug);
+    if (!songId) { item.state = "failed"; return false; }
   }
-  const songId = song.id;
-  const written = mutate((db) => addEntry(db, userId, songId, item));
+  const [written] = await commands.addImportedEntries(userId, [entryFor(songId, item)]);
   item.state = "done";
   return written;
 }
@@ -145,7 +110,7 @@ export async function runImportQueueOnce(): Promise<boolean> {
   const next = nextPending();
   if (!next) return false;
   const { job, item } = next;
-  if (!idx().db.users.some((u) => u.id === job.userId && !u.suspended)) {
+  if (!(await data.userActive(job.userId))) {
     forgetUser(job.userId); // account deleted or suspended: drop their listening data
     return true;
   }

@@ -1,7 +1,7 @@
 import "server-only";
 import { cookies } from "next/headers";
 import { createHash, randomBytes } from "crypto";
-import { getDB, mutate } from "./store";
+import { commands } from "./data";
 import { isProduction } from "./env";
 import type { PublicUser, User } from "../types";
 
@@ -28,12 +28,7 @@ async function currentTokenHash(): Promise<string | null> {
 export async function getSessionUser(): Promise<User | null> {
   const tokenHash = await currentTokenHash();
   if (!tokenHash) return null;
-  const db = getDB();
-  const session = db.sessions.find((s) => s.tokenHash === tokenHash);
-  if (!session || session.expiresAt < new Date().toISOString()) return null;
-  const user = db.users.find((u) => u.id === session.userId);
-  if (!user || user.suspended) return null;
-  return user;
+  return commands.sessionUser(tokenHash);
 }
 
 export async function getViewer(): Promise<PublicUser | null> {
@@ -57,10 +52,7 @@ export async function startSession(userId: string) {
   const token = randomBytes(32).toString("base64url");
   const now = new Date();
   const expiresAt = new Date(now.getTime() + MAX_AGE_DAYS * 864e5).toISOString();
-  mutate((db) => {
-    db.sessions = db.sessions.filter((s) => s.expiresAt > now.toISOString());
-    db.sessions.push({ tokenHash: hashToken(token), userId, expiresAt, createdAt: now.toISOString() });
-  });
+  await commands.createSession({ tokenHash: hashToken(token), userId, expiresAt, createdAt: now.toISOString() });
   (await cookies()).set(cookieName(), token, {
     httpOnly: true,
     sameSite: "lax",
@@ -73,12 +65,12 @@ export async function startSession(userId: string) {
 export async function endSession() {
   const jar = await cookies();
   const tokenHash = await currentTokenHash();
-  if (tokenHash) mutate((db) => void (db.sessions = db.sessions.filter((s) => s.tokenHash !== tokenHash)));
+  if (tokenHash) await commands.deleteSession(tokenHash);
   jar.delete(cookieName());
 }
 
 /** Revoke every session for a user except (optionally) the current one. */
 export async function revokeOtherSessions(userId: string) {
   const keep = await currentTokenHash();
-  mutate((db) => void (db.sessions = db.sessions.filter((s) => s.userId !== userId || s.tokenHash === keep)));
+  await commands.deleteOtherSessions(userId, keep);
 }

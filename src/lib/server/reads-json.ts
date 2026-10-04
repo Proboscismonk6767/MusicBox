@@ -25,5 +25,8 @@ export const jsonReads = {
   // small reads for pages that used to touch the store directly
   adminOverview: extra.adminOverview, songLite: extra.songLite, followingIds: extra.followingIds,
   onboardingData: extra.onboardingData, sitemapData: extra.sitemapData, ping: extra.ping,
+  songSlugByExternalId: extra.songSlugByExternalId, songIdBySlug: extra.songIdBySlug, albumByExternalId: extra.albumByExternalId,
+  artistLookup: extra.artistLookup, knownTracks: extra.knownTracks, knownArtistNames: extra.knownArtistNames, knownAlbumIds: extra.knownAlbumIds,
+  findLocalSongs: extra.findLocalSongs, userActive: extra.userActive,
   exportUserData,
 };

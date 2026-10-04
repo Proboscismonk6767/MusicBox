@@ -38,7 +38,7 @@ export async function POST(req: Request) {
 
   if (!rateLimit(`import:${user.id}`, 3, 3 / 3600)) return tooMany(user.id);
 
-  const result = importHistory(user.id, parsed.data.tracks);
+  const result = await importHistory(user.id, parsed.data.tracks);
   revalidatePath("/", "layout");
   return NextResponse.json(result, { headers: noStore });
 }

@@ -245,8 +245,8 @@ export function createSqlCommands(db: Db) {
       return tx(async (q) => {
         const e = await visibleEntry(q, user.id, entryId);
         if (await removed(q, "delete from review_likes where user_id = $1 and entry_id = $2", [user.id, entryId])) return false;
-        await q.query("insert into review_likes (user_id, entry_id, created_at) values ($1, $2, $3) on conflict do nothing", [user.id, entryId, now()]);
-        await notify(q, e.user_id, user.id, "review_like", entryId);
+        const added = await q.query("insert into review_likes (user_id, entry_id, created_at) values ($1, $2, $3) on conflict do nothing returning 1 as x", [user.id, entryId, now()]);
+        if (added.length) await notify(q, e.user_id, user.id, "review_like", entryId);
         return true;
       });
     },
@@ -307,9 +307,12 @@ export function createSqlCommands(db: Db) {
         const [{ n }] = await q.query<{ n: number }>("select count(*)::int as n from follows where follower_id = $1", [user.id]);
         if (n >= 5000) throw new UserError("You're following the maximum number of accounts.");
         const t = now();
-        await q.query("insert into follows (follower_id, following_id, created_at) values ($1, $2, $3) on conflict do nothing", [user.id, targetId, t]);
-        await q.query("insert into activity_events (id, actor_id, event_type, target_user_id, created_at) values ($1, $2, 'user_followed', $3, $4)", [newId("ac"), user.id, targetId, t]);
-        await notify(q, targetId, user.id, "follow");
+        // If a parallel request followed first, the insert adds nothing, and so must the feed event and notification.
+        const added = await q.query("insert into follows (follower_id, following_id, created_at) values ($1, $2, $3) on conflict do nothing returning 1 as x", [user.id, targetId, t]);
+        if (added.length) {
+          await q.query("insert into activity_events (id, actor_id, event_type, target_user_id, created_at) values ($1, $2, 'user_followed', $3, $4)", [newId("ac"), user.id, targetId, t]);
+          await notify(q, targetId, user.id, "follow");
+        }
         return true;
       });
     },
@@ -447,8 +450,8 @@ export function createSqlCommands(db: Db) {
       return tx(async (q) => {
         const l = await visibleList(q, user.id, listId);
         if (await removed(q, "delete from list_likes where user_id = $1 and list_id = $2", [user.id, listId])) return false;
-        await q.query("insert into list_likes (user_id, list_id, created_at) values ($1, $2, $3) on conflict do nothing", [user.id, listId, now()]);
-        await notify(q, l.user_id, user.id, "list_like", listId);
+        const added = await q.query("insert into list_likes (user_id, list_id, created_at) values ($1, $2, $3) on conflict do nothing returning 1 as x", [user.id, listId, now()]);
+        if (added.length) await notify(q, l.user_id, user.id, "list_like", listId);
         return true;
       });
     },
@@ -530,8 +533,8 @@ export function createSqlCommands(db: Db) {
           const ok = id !== user.id && (await exists(q, "select 1 from users where id = $1 and not suspended", [id])) && !(await blocked(q, user.id, id))
             && !(await exists(q, "select 1 from follows where follower_id = $1 and following_id = $2", [user.id, id]));
           if (!ok) continue;
-          await q.query("insert into follows (follower_id, following_id, created_at) values ($1, $2, $3)", [user.id, id, now()]);
-          await notify(q, id, user.id, "follow");
+          const added = await q.query("insert into follows (follower_id, following_id, created_at) values ($1, $2, $3) on conflict do nothing returning 1 as x", [user.id, id, now()]);
+          if (added.length) await notify(q, id, user.id, "follow");
         }
         const favs = [...me.favorite_artist_ids];
         for (const a of [...new Set(artistIds)].slice(0, 8)) {
@@ -618,7 +621,8 @@ export function createSqlCommands(db: Db) {
         const have = new Set((await q.query<{ song_id: string }>("select song_id from diary_entries where user_id = $1 and not removed and song_id = any($2::text[])", [userId, items.map((i) => i.songId)])).map((r) => r.song_id));
         const at = now();
         const written = items.map((it) => { if (have.has(it.songId)) return false; have.add(it.songId); return true; });
-        const rows = items.filter((_, n) => written[n]).map((it) => ({
+        // Sorted by song so concurrent imports lock the songs' stats rows in the same order (no deadlocks).
+        const rows = items.filter((_, n) => written[n]).sort((a, b) => (a.songId < b.songId ? -1 : a.songId > b.songId ? 1 : 0)).map((it) => ({
           id: newId("en"), user_id: userId, song_id: it.songId, liked: false, listened_at: it.listenedAt, is_relisten: false, tags: it.tags, memory: it.memory, created_at: at, updated_at: at,
         }));
         if (rows.length) await q.query(

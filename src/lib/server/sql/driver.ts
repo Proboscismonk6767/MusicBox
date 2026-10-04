@@ -39,6 +39,9 @@ export async function openPg(connectionString: string, opts: { max?: number } = 
   const pool = new pg.Pool({
     connectionString,
     max: opts.max ?? 10,
+    // A runaway query or a forgotten transaction must not hold a connection (and its locks) for long.
+    statement_timeout: 20_000,
+    idle_in_transaction_session_timeout: 30_000,
     types: { getTypeParser: ((oid: number, format?: string) => PARSERS[oid] ?? pg.types.getTypeParser(oid, format as "text")) as never },
   });
   pool.on("error", () => { /* an idle client dropped; the pool replaces it */ });
@@ -48,17 +51,23 @@ export async function openPg(connectionString: string, opts: { max?: number } = 
     query: (text, params) => run(pool, text, params),
     exec: async (text) => { await pool.query(text); },
     async tx(fn) {
-      const c = await pool.connect();
-      try {
-        await c.query("begin");
-        const out = await fn({ query: (text, params) => run(c, text, params), exec: async (text) => { await c.query(text); } });
-        await c.query("commit");
-        return out;
-      } catch (e) {
-        await c.query("rollback").catch(() => {});
-        throw e;
-      } finally {
-        c.release();
+      // Two transactions can deadlock when they touch the same rows in opposite orders (the song_stats
+      // triggers make that possible). Postgres aborts one; the whole transaction is safe to run again.
+      for (let attempt = 1; ; attempt++) {
+        const c = await pool.connect();
+        try {
+          await c.query("begin");
+          const out = await fn({ query: (text, params) => run(c, text, params), exec: async (text) => { await c.query(text); } });
+          await c.query("commit");
+          return out;
+        } catch (e) {
+          await c.query("rollback").catch(() => {});
+          const code = (e as { code?: string }).code;
+          if ((code === "40P01" || code === "40001") && attempt < 4) { await new Promise((r) => setTimeout(r, 15 * attempt + Math.random() * 25)); continue; }
+          throw e;
+        } finally {
+          c.release();
+        }
       }
     },
     close: () => pool.end(),

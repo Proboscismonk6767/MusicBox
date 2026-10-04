@@ -1,6 +1,4 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import fs from "fs";
-import path from "path";
 import { getDB } from "@/lib/server/store";
 import { openPglite, type Db } from "@/lib/server/sql/driver";
 import { applySchema } from "@/lib/server/sql/schema";

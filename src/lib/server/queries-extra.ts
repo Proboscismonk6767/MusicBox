@@ -23,6 +23,8 @@ export interface AdminReport {
 }
 
 /** Moderation queue: open reports first, then newest first. */
+const byId = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+
 export function adminOverview(): { reports: AdminReport[]; openCount: number; suspendedCount: number } {
   const i = idx();
   const sorted = [...i.db.reports].sort((a, b) => (a.status === "open" ? -1 : 1) - (b.status === "open" ? -1 : 1) || b.createdAt.localeCompare(a.createdAt));
@@ -68,11 +70,11 @@ export function onboardingData(userId: string) {
   const i = idx();
   const logs = (id: string) => i.db.songStats[id]?.logCount ?? 0;
   const top = i.db.albums
-    .map((al) => [...(i.songsByAlbum.get(al.id) ?? [])].sort((a, b) => logs(b.id) - logs(a.id))[0])
+    .map((al) => [...(i.songsByAlbum.get(al.id) ?? [])].sort((a, b) => logs(b.id) - logs(a.id) || byId(a.id, b.id))[0])
     .filter(Boolean)
-    .sort((a, b) => logs(b.id) - logs(a.id));
+    .sort((a, b) => logs(b.id) - logs(a.id) || byId(a.id, b.id));
   const topIds = new Set(top.map((s) => s.id));
-  const rest = i.db.songs.filter((s) => !topIds.has(s.id)).sort((a, b) => logs(b.id) - logs(a.id));
+  const rest = i.db.songs.filter((s) => !topIds.has(s.id)).sort((a, b) => logs(b.id) - logs(a.id) || byId(a.id, b.id));
   const songs = [...top, ...rest].slice(0, ONBOARDING_SONGS).map((s) => songCard(i, s));
   const artists = i.db.artists.map((a) => ({ id: a.id, name: a.name, slug: a.slug, imageUrl: a.imageUrl, hue: a.hue }));
   const people = suggestedUsers(userId, 8).map((u) => ({ ...u, logged: i.entriesByUser.get(u.id)?.length ?? 0 }));

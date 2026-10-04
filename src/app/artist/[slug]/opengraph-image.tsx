@@ -13,7 +13,7 @@ export default async function Image({ params }: { params: Promise<{ slug: string
     kicker: "Artist",
     title: page.artist.name,
     subtitle: page.artist.genres.slice(0, 3).join(" · ") || undefined,
-    facts: [plural(page.cards.length, "song"), ...(page.ratingCount ? [`${page.avg.toFixed(1)} / 5 from ${plural(page.ratingCount, "rating")}`] : [])],
+    facts: [plural(page.songCount, "song"), ...(page.ratingCount ? [`${page.avg.toFixed(1)} / 5 from ${plural(page.ratingCount, "rating")}`] : [])],
     palette: [`hsl(${page.artist.hue} 40% 22%)`, `hsl(${page.artist.hue} 50% 45%)`, "#0d0d0f"],
     art: [await artDataUrl(page.artist.imageUrl ?? cover?.artworkUrl)],
     round: !!page.artist.imageUrl,

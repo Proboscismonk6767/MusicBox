@@ -1,4 +1,4 @@
-import { vi } from "vitest";
+import { afterAll, vi } from "vitest";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -6,6 +6,15 @@ import path from "path";
 // Real data store in a throwaway directory; only Next's request context is faked.
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "musicbox-test-"));
 process.env.ADMIN_USERNAMES = "abtin";
+if (process.env.TEST_BACKEND === "postgres") process.env.DATA_BACKEND = "postgres"; // see tests/helpers/world.ts
+// With TEST_DATABASE_URL (a real PostgreSQL server) each test file gets its own throwaway database for the app.
+const appDb = process.env.TEST_BACKEND === "postgres" ? await (await import("./helpers/db")).createTestDatabase() : undefined;
+if (appDb?.url) process.env.DATABASE_URL = appDb.url;
+afterAll(async () => {
+  if (!appDb?.url) return;
+  await (await import("@/lib/server/sql")).resetDb();
+  await appDb.drop();
+});
 // Catalogue tests never touch the network and skip the public API's 1 req/s spacing.
 process.env.MUSICBRAINZ_MIN_INTERVAL_MS = "0";
 process.env.MUSICBRAINZ_CONTACT = "tests@example.com";

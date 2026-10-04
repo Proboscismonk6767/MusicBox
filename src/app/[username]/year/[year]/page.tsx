@@ -2,12 +2,11 @@ import { safeDecode } from "@/lib/util";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getViewer } from "@/lib/server/auth";
-import { getProfile } from "@/lib/server/queries";
-import { yearInReview } from "@/lib/server/insights";
 import { Artwork } from "@/components/Artwork";
 import { ArtistImage } from "@/components/cards";
 import { EmptyState, Stars } from "@/components/ui";
 import { ShareCard } from "./ShareCard";
+import { data } from "@/lib/server/data";
 
 export async function generateMetadata({ params }: { params: Promise<{ username: string; year: string }> }) {
   const { username, year } = await params;
@@ -18,10 +17,10 @@ export default async function YearPage({ params }: { params: Promise<{ username:
   const { username, year: ys } = await params;
   const year = Number(ys);
   const viewer = await getViewer();
-  const p = getProfile(safeDecode(username), viewer?.id);
+  const p = await data.getProfile(safeDecode(username), viewer?.id);
   if (!p || !year) notFound();
   if (!p.canView) return null;
-  const y = yearInReview(p.raw.id, year);
+  const y = await data.yearInReview(p.raw.id, year);
   if (!y.logged) return <EmptyState icon="calendar" title={`No logs in ${year}`} body="Year in review appears once there's listening history for the year." action={<Link href={`/${p.user.username}/stats`} className="btn-secondary">Back to stats</Link>} />;
 
   return (

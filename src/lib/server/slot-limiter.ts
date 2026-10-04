@@ -9,11 +9,12 @@ export class SlotLimiter {
 
   constructor(private intervalMs: number, private maxWaitMs: number) {}
 
-  /** Resolves when it is this caller's turn; returns false if the wait would exceed `maxWaitMs`. */
-  async acquire(): Promise<boolean> {
+  /** Resolves when it is this caller's turn; returns false if the wait would exceed `maxWaitMs`
+   *  (or the stricter `limitMs` for callers, like page renders, that can't afford to wait). */
+  async acquire(limitMs: number = this.maxWaitMs): Promise<boolean> {
     const now = Date.now();
     const start = Math.max(now, this.next);
-    if (start - now > this.maxWaitMs) return false;
+    if (start - now > Math.min(limitMs, this.maxWaitMs)) return false;
     this.next = start + this.intervalMs;
     if (start > now) await new Promise((r) => setTimeout(r, start - now));
     return true;

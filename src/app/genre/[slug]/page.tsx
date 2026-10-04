@@ -2,26 +2,26 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { getViewer } from "@/lib/server/auth";
-import { allGenres, getGenrePage, viewerStates } from "@/lib/server/queries";
 import { ArtistBubble, ListCardView } from "@/components/cards";
 import { SongTile } from "@/components/song-controls";
 import { ReviewCard } from "@/components/social";
 import { SectionHeader } from "@/components/ui";
+import { data } from "@/lib/server/data";
 
 type Props = { params: Promise<{ slug: string }> };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
-  const page = getGenrePage((await params).slug);
+  const page = await data.getGenrePage((await params).slug);
   return page ? { title: `Best ${page.name} Songs`, description: `Top-rated and popular ${page.name} songs on MusicBox.` } : { title: "Genre not found" };
 }
 
 export default async function GenrePage({ params }: Props) {
   const viewer = await getViewer();
   const { slug } = await params;
-  const page = getGenrePage(slug, viewer?.id);
+  const page = await data.getGenrePage(slug, viewer?.id);
   if (!page) notFound();
-  const states = viewerStates([...page.topRated, ...page.popular].map((s) => s.id), viewer?.id);
-  const related = allGenres().filter((g) => g.slug !== slug).slice(0, 14);
+  const states = await data.viewerStates([...page.topRated, ...page.popular].map((s) => s.id), viewer?.id);
+  const related = (await data.allGenres()).filter((g) => g.slug !== slug).slice(0, 14);
   return (
     <div className="space-y-12">
       <header>

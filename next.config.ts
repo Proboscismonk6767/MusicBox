@@ -21,6 +21,8 @@ const nextConfig: NextConfig = {
   productionBrowserSourceMaps: false,
   images: { remotePatterns: [{ protocol: "https", hostname: "*.mzstatic.com" }] },
   outputFileTracingRoot: path.resolve("."),
+  // Database drivers are loaded at runtime, not bundled.
+  serverExternalPackages: ["pg", "@electric-sql/pglite"],
   experimental: {
     serverActions: {
       bodySizeLimit: "256kb", // largest legit payload: a 500-song list with notes

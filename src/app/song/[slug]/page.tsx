@@ -2,7 +2,6 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { getViewer } from "@/lib/server/auth";
-import { getSongPage, viewerStates } from "@/lib/server/queries";
 import { Artwork } from "@/components/Artwork";
 import { Histogram, ListCardView } from "@/components/cards";
 import { SongActionPanel, SongTile } from "@/components/song-controls";
@@ -13,12 +12,13 @@ import { slugify } from "@/lib/util";
 import { avg } from "@/lib/server/stats";
 import { ReviewFilters } from "./ReviewFilters";
 import { jsonForScript } from "@/lib/server/security";
+import { data } from "@/lib/server/data";
 
 type Props = { params: Promise<{ slug: string }>; searchParams: Promise<{ reviews?: string }> };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
-  const page = getSongPage(slug);
+  const page = await data.getSongPage(slug);
   if (!page) return { title: "Song not found" };
   const title = `${page.song.title} by ${page.artists.map((a) => a.name).join(", ")} — Ratings, Reviews & More`;
   const description = `${page.song.title} (${page.album.releaseDate.slice(0, 4)}) from ${page.album.title}. Rated ${avg(page.stats).toFixed(1)}/5 from ${page.stats?.ratingCount ?? 0} ratings on MusicBox.`;
@@ -29,11 +29,11 @@ export default async function SongPage({ params, searchParams }: Props) {
   const { slug } = await params;
   const { reviews: reviewFilter = "popular" } = await searchParams;
   const viewer = await getViewer();
-  const page = getSongPage(slug, viewer?.id);
+  const page = await data.getSongPage(slug, viewer?.id);
   if (!page) notFound();
   const { song, album, artists, stats, card, friends, lists, similar, viewer: vstate, myEntries, evolution } = page;
   const average = avg(stats);
-  const similarStates = viewerStates(similar.map((s) => s.id), viewer?.id);
+  const similarStates = await data.viewerStates(similar.map((s) => s.id), viewer?.id);
 
   let reviews = page.reviews;
   if (reviewFilter === "recent") reviews = [...reviews].sort((a, b) => b.createdAt.localeCompare(a.createdAt));

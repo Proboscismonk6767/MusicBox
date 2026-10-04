@@ -1,14 +1,14 @@
-import { getReview } from "@/lib/server/queries";
 import { artDataUrl, brandCard, clip, renderCard } from "@/lib/server/og";
+import { data } from "@/lib/server/data";
 
 export const alt = "Review on MusicBox";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
 export default async function Image({ params }: { params: Promise<{ id: string }> }) {
-  const data = getReview((await params).id);
-  if (!data) return brandCard();
-  const { review: r } = data;
+  const found = await data.getReview((await params).id);
+  if (!found) return brandCard();
+  const { review: r } = found;
   const stars = r.rating ? `${r.rating} / 5` : undefined;
   return renderCard({
     kicker: `${r.user.displayName}'s review`,

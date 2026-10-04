@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { jar } from "./setup";
-import { getDB, mutate } from "@/lib/server/store";
+import { getDB } from "@/lib/server/store";
+import { commands } from "@/lib/server/data";
 import { startSession } from "@/lib/server/auth";
 import { resetRateLimits } from "@/lib/server/ratelimit";
 import { metricsSnapshot, resetMetricsForTests, track } from "@/lib/server/metrics";
@@ -37,7 +38,7 @@ describe("metrics", () => {
 
   it("records a first_log only for a user's very first diary entry", async () => {
     const id = "us-first-log";
-    mutate((db) => void db.users.push({ id, username: "firstlog", displayName: "First Log", bio: "", avatarHue: 10, passwordHash: "x", createdAt: new Date().toISOString(), favoriteSongIds: [], favoriteArtistIds: [], profileVisibility: "public", role: "user", onboarded: true }));
+    await commands.createUser({ id, username: "firstlog", displayName: "First Log", bio: "", avatarHue: 10, passwordHash: "x", createdAt: new Date().toISOString(), favoriteSongIds: [], favoriteArtistIds: [], profileVisibility: "public", role: "user", onboarded: true });
     await startSession(id);
     const [a, b] = getDB().songs;
     await actions.logSong({ songId: a.id, rating: 4 });
@@ -108,7 +109,7 @@ describe("error reporting", () => {
 
 describe("health", () => {
   it("answers 200 when the store loads", async () => {
-    const res = health();
+    const res = await health();
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
   });

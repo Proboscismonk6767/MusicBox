@@ -16,6 +16,16 @@ const schema = z.object({
   NEXT_PUBLIC_LEGAL_REVIEWED: z.enum(["true", "false"]).optional(),
   // Writable, persistent directory for the JSON store (a mounted volume in production).
   DATA_DIR: z.string().min(1).optional(),
+  // Data engine: "json" (default, single file in DATA_DIR) or "postgres".
+  DATA_BACKEND: z.enum(["json", "postgres"]).optional(),
+  // Postgres connection string. Required in production when DATA_BACKEND=postgres.
+  // Without it, development uses an embedded Postgres (PGlite) stored in DATA_DIR.
+  DATABASE_URL: z.string().regex(/^postgres(ql)?:\/\//).optional(),
+  // Connections kept open to Postgres by each app instance. Keep instances x this below the server's max_connections.
+  DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(200).optional(),
+  // How long (seconds) public, viewer-independent reads (trending, top rated, genres, similar songs) may be reused
+  // before asking Postgres again. Default 30 in production, 0 (off) elsewhere. Only applies to DATA_BACKEND=postgres.
+  READ_CACHE_SECONDS: z.coerce.number().int().min(0).max(3600).optional(),
   // Comma-separated usernames granted moderator/admin rights. The only source of admin in production.
   ADMIN_USERNAMES: z.string().optional(),
   // Header your proxy/platform sets with the real client IP (e.g. "x-real-ip", "cf-connecting-ip", "x-vercel-forwarded-for").
@@ -54,7 +64,8 @@ export function env(): Env {
     if (!e.NEXT_PUBLIC_SITE_URL) missing.push("NEXT_PUBLIC_SITE_URL");
     else if (!e.NEXT_PUBLIC_SITE_URL.startsWith("https://")) missing.push("NEXT_PUBLIC_SITE_URL (must be https)");
     if (!e.NEXT_PUBLIC_CONTACT_EMAIL) missing.push("NEXT_PUBLIC_CONTACT_EMAIL");
-    if (!e.DATA_DIR) missing.push("DATA_DIR");
+    if (!e.DATA_DIR) missing.push("DATA_DIR"); // still holds the catalogue cache, metrics and the import queue
+    if (e.DATA_BACKEND === "postgres" && !e.DATABASE_URL) missing.push("DATABASE_URL");
     if (!e.CLIENT_IP_HEADER) missing.push("CLIENT_IP_HEADER");
     if ((e.METADATA_PROVIDER ?? "musicbrainz") === "musicbrainz" && !e.MUSICBRAINZ_CONTACT) missing.push("MUSICBRAINZ_CONTACT");
     if (e.SEED_DEMO_DATA === "true") missing.push("SEED_DEMO_DATA must not be true in production");
@@ -74,3 +85,6 @@ export const demoDataEnabled = () => !isProduction() && env().SEED_DEMO_DATA !==
 export function adminUsernames(): Set<string> {
   return new Set((env().ADMIN_USERNAMES ?? "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean));
 }
+
+/** Which engine holds the data. "json" is the original single-file store; "postgres" uses DATABASE_URL (or an embedded Postgres in development). */
+export const backendName = (): "json" | "postgres" => env().DATA_BACKEND ?? "json";

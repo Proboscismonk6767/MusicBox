@@ -1,14 +1,12 @@
 import "server-only";
-import type { Album, Artist, Song } from "../types";
-import { mutate } from "./store";
-import { idx } from "./indexes";
-import { slugify } from "../util";
-import { emptyStats } from "./stats";
+import type { Song } from "../types";
+import { data, commands } from "./data";
+import { dateOrNull, rawId } from "./import-helpers";
 import { safeExternalUrl, securityLog } from "./security";
 import { rateLimit } from "./ratelimit";
 import { metadataProviderName } from "./env";
 import { date, MetadataError, num, str, type ExternalAlbum, type ExternalArtist, type ExternalTrack, type MetadataProvider } from "./catalogue-core";
-import { musicbrainz } from "./musicbrainz";
+import { musicbrainz, withWaitBudget } from "./musicbrainz";
 import { cached } from "./catalogue-cache";
 
 export { MetadataError };
@@ -172,22 +170,18 @@ function providerFor(externalId: string): MetadataProvider {
   return externalId.startsWith("mb:") ? musicbrainz : itunes;
 }
 
-const rawId = (externalId: string) => externalId.split(":")[1];
-
 /** External search results that aren't already in our catalogue. */
 export async function searchExternal(q: string) {
   q = q.slice(0, 100);
   const results = await metadataProvider.searchTracks(q, 10);
-  const i = idx();
-  const known = new Set(i.db.songs.map((s) => s.externalId).filter(Boolean));
-  const knownTitles = new Set(i.db.songs.map((s) => `${s.title.toLowerCase()}|${i.artist.get(s.artistIds[0])?.name.toLowerCase()}`));
-  return results.filter((t) => !known.has(t.externalId) && !knownTitles.has(`${t.title.toLowerCase()}|${t.artist.name.toLowerCase()}`));
+  const known = await data.knownTracks(results.map((t) => ({ externalId: t.externalId, title: t.title, artist: t.artist.name })));
+  return results.filter((_, n) => !known[n]);
 }
 
 /** Import a track (and its album's track list) into the catalogue. Idempotent. */
 export async function importTrack(externalId: string, prefetched?: ExternalTrack[]): Promise<string> {
-  const existing = idx().db.songs.find((s) => s.externalId === externalId);
-  if (existing && !prefetched) return existing.slug;
+  const existing = await data.songSlugByExternalId(externalId);
+  if (existing && !prefetched) return existing;
   const track = prefetched?.find((t) => t.externalId === externalId) ?? (await metadataProvider.getTrack(externalId));
   if (!track) throw new MetadataError("That song is no longer available in the catalogue.");
   let albumTracks: ExternalTrack[] = prefetched ?? [];
@@ -200,97 +194,67 @@ export async function importTrack(externalId: string, prefetched?: ExternalTrack
 
   // Search results sometimes lack a date (stored as 1970-01-01); the album's own track list knows it.
   const albumDate = albumTracks.map((t) => dateOrNull(t.album.releaseDate)).find(Boolean) ?? track.album.releaseDate;
-
-  return mutate((db) => {
-    const artist = ensureArtist(db.artists, track);
-    let album = db.albums.find((a) => a.externalId === track.album.externalId);
-    if (!album) {
-      const hue = artistHue(track.artist.name);
-      album = {
-        id: "al" + rawId(track.album.externalId), externalId: track.album.externalId, slug: uniqueSlug(db.albums, slugify(`${track.album.title}-${track.artist.name}`)),
-        title: track.album.title, artistId: artist.id, releaseDate: albumDate, genres: track.genre ? [track.genre] : [],
-        artworkUrl: track.album.artworkUrl, palette: [`hsl(${hue} 40% 40%)`, `hsl(${(hue + 40) % 360} 50% 60%)`, `hsl(${hue} 30% 12%)`], pattern: hue % 22, producers: [],
-      } satisfies Album;
-      db.albums.push(album);
-    }
-    let slug = "";
-    for (const t of albumTracks) {
-      if (db.songs.some((s) => s.externalId === t.externalId)) {
-        if (t.externalId === track.externalId) slug = db.songs.find((s) => s.externalId === t.externalId)!.slug;
-        continue;
-      }
-      const q = encodeURIComponent(`${t.title} ${t.artist.name}`);
-      const song: Song = {
-        id: "so" + rawId(t.externalId), externalId: t.externalId, slug: uniqueSlug(db.songs, slugify(`${t.title}-${t.artist.name}`)), title: t.title,
-        albumId: album.id, artistIds: [ensureArtist(db.artists, t).id], featured: t.featured ?? [], durationMs: t.durationMs, trackNumber: t.trackNumber, releaseDate: dateOrNull(t.album.releaseDate) ?? albumDate,
-        explicit: t.explicit, writers: [], producers: [], genres: t.genre ? [t.genre] : album.genres, popularity: 50, previewUrl: t.previewUrl,
-        links: { apple: t.url, spotify: `https://open.spotify.com/search/${q}`, youtube: `https://www.youtube.com/results?search_query=${q}` },
-      };
-      db.songs.push(song);
-      db.songStats[song.id] = emptyStats();
-      if (t.externalId === track.externalId) slug = song.slug;
-    }
-    return slug;
-  });
-}
-
-/** Providers use 1970-01-01 as "unknown" (see catalogue-core `date`). */
-const dateOrNull = (d: string) => (d.startsWith("1970-") ? null : d);
-
-const artistHue =(name: string) => [...name].reduce((a, c) => a + c.charCodeAt(0), 0) % 360;
-
-/** Find the artist by catalogue id or exact name, creating it when new. Call inside mutate(). */
-function ensureArtist(artists: Artist[], t: ExternalTrack): Artist {
-  const found = artists.find((a) => a.externalId === t.artist.externalId || a.name.toLowerCase() === t.artist.name.toLowerCase());
-  if (found) {
-    // Seeded artists have no catalogue id yet; remembering it makes later discography lookups exact.
-    found.externalId ??= t.artist.externalId;
-    return found;
-  }
-  const artist = { id: "ar" + rawId(t.artist.externalId), externalId: t.artist.externalId, slug: uniqueSlug(artists, slugify(t.artist.name)), name: t.artist.name, genres: t.genre ? [t.genre] : [], hue: artistHue(t.artist.name) } satisfies Artist;
-  artists.push(artist);
-  return artist;
+  return commands.commitImport(track, albumTracks, albumDate);
 }
 
 /** Import a whole album by its external id; returns the album slug. */
 export async function importAlbum(albumExternalId: string): Promise<string> {
-  const existing = idx().db.albums.find((a) => a.externalId === albumExternalId);
-  if (existing && (idx().songsByAlbum.get(existing.id)?.length ?? 0) > 1) return existing.slug;
+  const existing = await data.albumByExternalId(albumExternalId);
+  if (existing && existing.songCount > 1) return existing.slug;
   const tracks = await metadataProvider.getAlbumTracks(albumExternalId);
   if (!tracks.length) throw new MetadataError("That album has no tracks available in the catalogue.");
   await importTrack(tracks[0].externalId, tracks);
-  return idx().db.albums.find((a) => a.externalId === albumExternalId)!.slug;
+  return (await data.albumByExternalId(albumExternalId))!.slug;
 }
 
 /** Create (or find) an artist from the external catalogue; returns the slug. */
 export async function importArtist(artistExternalId: string): Promise<string> {
-  const known = idx().db.artists.find((a) => a.externalId === artistExternalId);
+  const known = await data.artistLookup({ externalId: artistExternalId });
   if (known) return known.slug;
   const albums = await metadataProvider.getArtistAlbums(artistExternalId);
   if (!albums.length) throw new MetadataError("We couldn't find music for that artist.");
-  const byName = idx().db.artists.find((a) => a.name.toLowerCase() === albums[0].artist.toLowerCase());
+  const byName = await data.artistLookup({ name: albums[0].artist });
   if (byName) {
-    mutate(() => { byName.externalId ??= artistExternalId; });
+    await commands.setArtistExternalId(byName.id, artistExternalId);
     return byName.slug;
   }
   // Import their most recent full release so the page has content.
   const pick = albums.find((a) => a.kind === "album" || (a.trackCount ?? 0) >= 6) ?? albums[0];
   await importAlbum(pick.externalId);
-  const artist = idx().db.artists.find((a) => a.externalId === artistExternalId || a.name.toLowerCase() === albums[0].artist.toLowerCase())!;
-  mutate(() => { artist.externalId ??= artistExternalId; });
+  const artist = (await data.artistLookup({ externalId: artistExternalId, name: albums[0].artist }))!;
+  await commands.setArtistExternalId(artist.id, artistExternalId);
   return artist.slug;
 }
 
-/** Provider discography for any artist (seeded or imported). */
+/** How long a page render will wait for the catalogue before showing the page without it. */
+const RENDER_WAIT_MS = 1500;
+/** After a failed lookup, don't retry the same artist for a while (stops crawlers hammering a busy catalogue). */
+const FAIL_MEMO_MS = 60_000;
+const gm = globalThis as unknown as { __discoFailures?: Map<string, number> };
+
+/** Provider discography for any artist (seeded or imported). Called while rendering artist pages,
+ *  so it gives up quickly instead of queueing behind other catalogue requests. */
 export async function externalDiscography(artist: { name: string; externalId?: string }): Promise<ExternalAlbum[]> {
-  let id = artist.externalId;
-  if (!id) {
-    const hits = await metadataProvider.searchArtists(artist.name, 5);
-    const hit = hits.find((h) => h.name.toLowerCase() === artist.name.toLowerCase());
-    if (!hit) return [];
-    id = hit.externalId;
+  const failures = (gm.__discoFailures ??= new Map());
+  const key = artist.externalId ?? artist.name.toLowerCase();
+  const until = failures.get(key);
+  if (until && until > Date.now()) throw new Error("Discography temporarily unavailable");
+  try {
+    return await withWaitBudget(RENDER_WAIT_MS, async () => {
+      let id = artist.externalId;
+      if (!id) {
+        const hits = await metadataProvider.searchArtists(artist.name, 5);
+        const hit = hits.find((h) => h.name.toLowerCase() === artist.name.toLowerCase());
+        if (!hit) return [];
+        id = hit.externalId;
+      }
+      return metadataProvider.getArtistAlbums(id);
+    });
+  } catch (e) {
+    if (failures.size > 500) failures.clear();
+    failures.set(key, Date.now() + FAIL_MEMO_MS);
+    throw e;
   }
-  return metadataProvider.getArtistAlbums(id);
 }
 
 /** Full external search for autocomplete/search page. `quick` (autocomplete) asks the
@@ -302,9 +266,8 @@ export async function searchCatalogue(q: string, opts: { quick?: boolean } = {})
     opts.quick ? [] : metadataProvider.searchArtists(q, 4).catch(() => []),
     opts.quick ? [] : metadataProvider.searchAlbums(q, 4).catch(() => []),
   ]);
-  const i = idx();
-  const knownArtists = new Set(i.db.artists.map((a) => a.name.toLowerCase()));
-  const knownAlbums = new Set(i.db.albums.map((a) => a.externalId).filter(Boolean));
+  const knownArtists = new Set(await data.knownArtistNames(artists.map((x) => x.name)));
+  const knownAlbums = new Set(await data.knownAlbumIds(albums.map((x) => x.externalId)));
   return {
     source: metadataProvider.name,
     tracks,
@@ -313,19 +276,12 @@ export async function searchCatalogue(q: string, opts: { quick?: boolean } = {})
   };
 }
 
-function uniqueSlug(rows: { slug: string }[], base: string) {
-  let slug = base;
-  let n = 2;
-  while (rows.some((r) => r.slug === slug)) slug = `${base}-${n++}`;
-  return slug;
-}
-
 // ── Audio previews ──────────────────────────────────────────────────────
 
 const norm = (s: string) => s.toLowerCase().replace(/\(.*?\)|\[.*?\]/g, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 
 /** A 30-second Apple preview clip for any catalogue song (stored URL first, else an iTunes lookup). Cached on disk. */
-export async function findPreviewUrl(song: Song, artistName: string): Promise<string | null> {
+export async function findPreviewUrl(song: Pick<Song, "id" | "title" | "durationMs" | "previewUrl">, artistName: string): Promise<string | null> {
   if (song.previewUrl) return song.previewUrl;
   return cached(`preview:${song.id}`, 30 * 86_400_000, async () => {
     const term = encodeURIComponent(`${song.title} ${artistName}`.slice(0, 120));

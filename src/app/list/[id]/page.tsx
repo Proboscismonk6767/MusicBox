@@ -2,18 +2,18 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { getViewer } from "@/lib/server/auth";
-import { getListPage } from "@/lib/server/queries";
 import { Collage } from "@/components/Artwork";
 import { SongRow, SongTile } from "@/components/song-controls";
 import { Comments, ReportButton } from "@/components/social";
 import { Avatar, EmptyState, Pill } from "@/components/ui";
 import { formatDate } from "@/lib/format";
 import { ListActions } from "./ListActions";
+import { data } from "@/lib/server/data";
 
 type Props = { params: Promise<{ id: string }>; searchParams: Promise<{ view?: string; sort?: string }> };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
-  const p = getListPage((await params).id);
+  const p = await data.getListPage((await params).id);
   if (!p) return { title: "List not found" };
   return { title: `${p.list.title} — a list by ${p.card.owner.displayName}`, description: p.list.description || `${p.list.items.length} songs`, robots: p.list.visibility === "public" ? undefined : { index: false } };
 }
@@ -22,7 +22,7 @@ export default async function ListPage({ params, searchParams }: Props) {
   const { id } = await params;
   const { view = "list", sort = "position" } = await searchParams;
   const viewer = await getViewer();
-  const p = getListPage(id, viewer?.id);
+  const p = await data.getListPage(id, viewer?.id);
   if (!p) notFound();
   const { list, card } = p;
   let items = p.items.map((it, i) => ({ ...it, position: i + 1 }));

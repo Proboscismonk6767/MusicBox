@@ -5,9 +5,15 @@ import { idx, type Indexes } from "./indexes";
 import { avg, weightedAvg } from "./stats";
 import { slugify } from "../util";
 import { toPublic } from "./auth";
+import { compat, matcher } from "./algorithms";
 
 const MAX_DIARY_ROWS = 1000;
 const MAX_COMMENTS = 300;
+const MAX_SONG_REVIEWS = 200;
+const MAX_LIST_CARDS = 200;
+
+/** Ties in any ranking fall back to id order, so a page never reshuffles between requests. */
+const byId = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
 // ── Mappers ─────────────────────────────────────────────────────────────
 
@@ -121,7 +127,7 @@ export function trendingSongs(limit = 12): SongCard[] {
       score.set(e.songId, (score.get(e.songId) ?? 0) + 1 + (e.review ? 0.5 : 0) + (e.liked ? 0.5 : 0));
     }
     if (score.size >= limit) {
-      return [...score.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit).map(([id]) => songCard(i, i.song.get(id)!));
+      return [...score.entries()].sort((a, b) => b[1] - a[1] || byId(a[0], b[0])).slice(0, limit).map(([id]) => songCard(i, i.song.get(id)!));
     }
   }
   return [];
@@ -131,7 +137,7 @@ export function highlyRated(limit = 12, minCount = 4): SongCard[] {
   const i = idx();
   return i.db.songs
     .filter((s) => (i.db.songStats[s.id]?.ratingCount ?? 0) >= minCount)
-    .sort((a, b) => weightedAvg(i.db.songStats[b.id]) - weightedAvg(i.db.songStats[a.id]))
+    .sort((a, b) => weightedAvg(i.db.songStats[b.id]) - weightedAvg(i.db.songStats[a.id]) || byId(a.id, b.id))
     .slice(0, limit)
     .map((s) => songCard(i, s));
 }
@@ -143,14 +149,14 @@ export function hiddenGems(limit = 12): SongCard[] {
       const st = i.db.songStats[s.id];
       return st && st.ratingCount >= 2 && st.ratingCount <= 5 && avg(st) >= 3.9;
     })
-    .sort((a, b) => avg(i.db.songStats[b.id]) - avg(i.db.songStats[a.id]))
+    .sort((a, b) => avg(i.db.songStats[b.id]) - avg(i.db.songStats[a.id]) || byId(a.id, b.id))
     .slice(0, limit)
     .map((s) => songCard(i, s));
 }
 
 export function newReleases(limit = 12): SongCard[] {
   const i = idx();
-  const albums = [...i.db.albums].sort((a, b) => b.releaseDate.localeCompare(a.releaseDate)).slice(0, 6);
+  const albums = [...i.db.albums].sort((a, b) => b.releaseDate.localeCompare(a.releaseDate) || byId(a.id, b.id)).slice(0, 6);
   const out: Song[] = [];
   for (const al of albums) {
     const songs = [...(i.songsByAlbum.get(al.id) ?? [])].sort((a, b) => (i.db.songStats[b.id]?.logCount ?? 0) - (i.db.songStats[a.id]?.logCount ?? 0));
@@ -165,7 +171,7 @@ export function trendingReviews(limit = 8, viewerId?: string): ReviewView[] {
   return i.db.entries
     .filter((e) => e.review && entryOk(i, e, viewerId))
     .map((e) => ({ e, s: (i.reviewLikes.get(e.id)?.size ?? 0) * (e.createdAt > since ? 2 : 1) + (i.commentsByTarget.get(`entry:${e.id}`)?.length ?? 0) }))
-    .sort((a, b) => b.s - a.s)
+    .sort((a, b) => b.s - a.s || byId(a.e.id, b.e.id))
     .slice(0, limit)
     .map(({ e }) => reviewView(i, e, viewerId));
 }
@@ -174,7 +180,7 @@ export function popularLists(limit = 6, viewerId?: string): ListCard[] {
   const i = idx();
   return i.db.lists
     .filter((l) => l.visibility === "public" && listOk(i, l, viewerId))
-    .sort((a, b) => (i.listLikes.get(b.id)?.size ?? 0) - (i.listLikes.get(a.id)?.size ?? 0))
+    .sort((a, b) => (i.listLikes.get(b.id)?.size ?? 0) - (i.listLikes.get(a.id)?.size ?? 0) || byId(a.id, b.id))
     .slice(0, limit)
     .map((l) => listCard(i, l));
 }
@@ -183,7 +189,7 @@ export function recentReviews(limit = 6): ReviewView[] {
   const i = idx();
   return i.db.entries
     .filter((e) => e.review && (e.rating ?? 0) >= 4 && entryOk(i, e))
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || byId(a.id, b.id))
     .slice(0, limit)
     .map((e) => reviewView(i, e));
 }
@@ -193,7 +199,7 @@ export function friendsListening(viewerId: string, limit = 12): { song: SongCard
   const following = i.following.get(viewerId) ?? new Set();
   const seen = new Set<string>();
   const out: { song: SongCard; user: UserMini; rating?: number }[] = [];
-  const entries = i.db.entries.filter((e) => following.has(e.userId) && entryOk(i, e, viewerId)).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const entries = i.db.entries.filter((e) => following.has(e.userId) && entryOk(i, e, viewerId)).sort((a, b) => b.createdAt.localeCompare(a.createdAt) || byId(a.id, b.id));
   for (const e of entries) {
     if (seen.has(e.songId)) continue;
     seen.add(e.songId);
@@ -207,9 +213,10 @@ export function friendsFavourites(viewerId: string, limit = 5): { song: SongCard
   const i = idx();
   const following = i.following.get(viewerId) ?? new Set();
   const counts = new Map<string, string[]>();
-  for (const l of i.db.likes) if (following.has(l.userId) && visibleUser(i, i.user.get(l.userId)!, viewerId) && !isHidden(i, viewerId, l.userId)) counts.set(l.songId, [...(counts.get(l.songId) ?? []), l.userId]);
+  const likes = [...i.db.likes].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || byId(a.userId, b.userId));
+  for (const l of likes) if (following.has(l.userId) && visibleUser(i, i.user.get(l.userId)!, viewerId) && !isHidden(i, viewerId, l.userId)) counts.set(l.songId, [...(counts.get(l.songId) ?? []), l.userId]);
   return [...counts.entries()]
-    .sort((a, b) => b[1].length - a[1].length)
+    .sort((a, b) => b[1].length - a[1].length || byId(a[0], b[0]))
     .slice(0, limit)
     .map(([sid, us]) => ({ song: songCard(i, i.song.get(sid)!), count: us.length, users: us.slice(0, 3).map((u) => userMini(i.user.get(u)!)) }));
 }
@@ -225,7 +232,7 @@ export function suggestedUsers(viewerId: string | undefined, limit = 4): (UserMi
     return { u, s: (comp?.score ?? 50) + mutual * 6 + followers, comp, mutual };
   });
   return scored
-    .sort((a, b) => b.s - a.s)
+    .sort((a, b) => b.s - a.s || byId(a.u.id, b.u.id))
     .slice(0, limit)
     .map(({ u, comp, mutual }) => ({
       ...userMini(u), bio: u.bio,
@@ -255,7 +262,8 @@ export function getSongPage(slug: string, viewerId?: string) {
       const score = (following.has(e.userId) ? 12 : 0) + Math.log2(1 + likes) * 4 + Math.max(0, 6 - ageDays / 30) + Math.min(3, (e.review?.length ?? 0) / 80);
       return { e, score };
     })
-    .sort((a, b) => b.score - a.score)
+    .sort((a, b) => b.score - a.score || byId(a.e.id, b.e.id))
+    .slice(0, MAX_SONG_REVIEWS)
     .map(({ e }) => reviewView(i, e, viewerId));
 
   const friends = viewerId
@@ -263,10 +271,10 @@ export function getSongPage(slug: string, viewerId?: string) {
         .map((uid) => ({ u: i.user.get(uid)!, r: i.ratingsByUser.get(uid)?.get(song.id), liked: !!i.likesByUser.get(uid)?.has(song.id) }))
         .filter((x) => x.u && x.r && visibleUser(i, x.u, viewerId) && !isHidden(i, viewerId, x.u.id))
         .map((x) => ({ user: userMini(x.u), rating: x.r!.rating, liked: x.liked }))
-        .sort((a, b) => b.rating - a.rating)
+        .sort((a, b) => b.rating - a.rating || byId(a.user.id, b.user.id))
     : [];
 
-  const myEntries = viewerId ? entries.filter((e) => e.userId === viewerId).sort((a, b) => a.listenedAt.localeCompare(b.listenedAt)) : [];
+  const myEntries = viewerId ? entries.filter((e) => e.userId === viewerId).sort((a, b) => a.listenedAt.localeCompare(b.listenedAt) || a.createdAt.localeCompare(b.createdAt) || byId(a.id, b.id)) : [];
   const evolution: { year: number; rating: number }[] = [];
   for (const e of myEntries) {
     if (e.rating == null) continue;
@@ -276,7 +284,7 @@ export function getSongPage(slug: string, viewerId?: string) {
     else evolution.push({ year: y, rating: e.rating });
   }
 
-  const lists = (i.listsBySong.get(song.id) ?? []).filter((l) => l.visibility === "public" && listOk(i, l, viewerId)).slice(0, 6).map((l) => listCard(i, l));
+  const lists = [...(i.listsBySong.get(song.id) ?? [])].sort(byCreated).filter((l) => l.visibility === "public" && listOk(i, l, viewerId)).slice(0, 6).map((l) => listCard(i, l));
 
   return {
     song, album, artists, stats, card: songCard(i, song), reviews, friends, lists,
@@ -289,7 +297,10 @@ export function getSongPage(slug: string, viewerId?: string) {
   };
 }
 
-/** Item-item similarity: co-rating listeners, shared lists, artist and genre. */
+/** Oldest list first; the order lists are shown in when only a few fit. */
+const byCreated = (a: SongList, b: SongList) => a.createdAt.localeCompare(b.createdAt) || byId(a.id, b.id);
+
+/** Item-item similarity: co-rating listeners, shared lists, artist and genre. Scores are in tenths so the sums are exact. */
 export function similarSongs(songId: string, limit = 12): SongCard[] {
   const i = idx();
   const song = i.song.get(songId)!;
@@ -297,19 +308,19 @@ export function similarSongs(songId: string, limit = 12): SongCard[] {
   const bump = (id: string, v: number) => id !== songId && score.set(id, (score.get(id) ?? 0) + v);
   for (const r of i.ratingsBySong.get(songId) ?? []) {
     if (r.rating < 4) continue;
-    for (const [sid, rr] of i.ratingsByUser.get(r.userId) ?? []) if (rr.rating >= 4) bump(sid, 1);
+    for (const [sid, rr] of i.ratingsByUser.get(r.userId) ?? []) if (rr.rating >= 4) bump(sid, 10);
   }
-  for (const l of i.listsBySong.get(songId) ?? []) for (const it of l.items) bump(it.songId, 1.5);
+  for (const l of i.listsBySong.get(songId) ?? []) for (const it of l.items) bump(it.songId, 15);
   for (const s of i.db.songs) {
-    if (s.albumId === song.albumId) bump(s.id, 0.5);
-    else if (s.artistIds.some((a) => song.artistIds.includes(a))) bump(s.id, 1);
+    if (s.albumId === song.albumId) bump(s.id, 5);
+    else if (s.artistIds.some((a) => song.artistIds.includes(a))) bump(s.id, 10);
     const shared = s.genres.filter((g) => song.genres.includes(g)).length;
-    if (shared) bump(s.id, shared * 1.2);
+    if (shared) bump(s.id, shared * 12);
   }
   // Diversify: max 2 per album.
   const perAlbum = new Map<string, number>();
   const out: SongCard[] = [];
-  for (const [sid] of [...score.entries()].sort((a, b) => b[1] - a[1])) {
+  for (const [sid] of [...score.entries()].sort((a, b) => b[1] - a[1] || byId(a[0], b[0]))) {
     const s = i.song.get(sid)!;
     const n = perAlbum.get(s.albumId) ?? 0;
     if (n >= 2) continue;
@@ -327,23 +338,22 @@ export function getArtistPage(slug: string, viewerId?: string) {
   const artist = i.artistBySlug.get(slug);
   if (!artist) return null;
   const songs = i.songsByArtist.get(artist.id) ?? [];
-  const cards = songs.map((s) => songCard(i, s));
   const st = (id: string) => i.db.songStats[id];
-  const popular = [...songs].sort((a, b) => (st(b.id)?.logCount ?? 0) - (st(a.id)?.logCount ?? 0)).slice(0, 10).map((s) => songCard(i, s));
-  const highest = [...songs].filter((s) => (st(s.id)?.ratingCount ?? 0) >= 2).sort((a, b) => weightedAvg(st(b.id)) - weightedAvg(st(a.id))).slice(0, 10).map((s) => songCard(i, s));
-  const albums = i.db.albums.filter((a) => a.artistId === artist.id).sort((a, b) => b.releaseDate.localeCompare(a.releaseDate));
+  const popular = [...songs].sort((a, b) => (st(b.id)?.logCount ?? 0) - (st(a.id)?.logCount ?? 0) || byId(a.id, b.id)).slice(0, 10).map((s) => songCard(i, s));
+  const highest = [...songs].filter((s) => (st(s.id)?.ratingCount ?? 0) >= 2).sort((a, b) => weightedAvg(st(b.id)) - weightedAvg(st(a.id)) || byId(a.id, b.id)).slice(0, 10).map((s) => songCard(i, s));
+  const albums = i.db.albums.filter((a) => a.artistId === artist.id).sort((a, b) => b.releaseDate.localeCompare(a.releaseDate) || byId(a.id, b.id));
   const songIds = new Set(songs.map((s) => s.id));
   const totals = songs.reduce((acc, s) => ({ sum: acc.sum + (st(s.id)?.ratingSum ?? 0), n: acc.n + (st(s.id)?.ratingCount ?? 0) }), { sum: 0, n: 0 });
   const reviews = i.db.entries
     .filter((e) => e.review && songIds.has(e.songId) && entryOk(i, e, viewerId))
-    .sort((a, b) => (i.reviewLikes.get(b.id)?.size ?? 0) - (i.reviewLikes.get(a.id)?.size ?? 0))
+    .sort((a, b) => (i.reviewLikes.get(b.id)?.size ?? 0) - (i.reviewLikes.get(a.id)?.size ?? 0) || byId(a.id, b.id))
     .slice(0, 6)
     .map((e) => reviewView(i, e, viewerId));
-  const lists = i.db.lists.filter((l) => l.visibility === "public" && listOk(i, l, viewerId) && l.items.some((it) => songIds.has(it.songId))).slice(0, 4).map((l) => listCard(i, l));
-  const fanIds = i.db.artistFollows.filter((f) => f.artistId === artist.id).map((f) => f.userId);
+  const lists = [...i.db.lists].sort(byCreated).filter((l) => l.visibility === "public" && listOk(i, l, viewerId) && l.items.some((it) => songIds.has(it.songId))).slice(0, 4).map((l) => listCard(i, l));
+  const fanIds = i.db.artistFollows.filter((f) => f.artistId === artist.id).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || byId(a.userId, b.userId)).map((f) => f.userId);
   const fans = fanIds.map((u) => i.user.get(u)!).filter((u) => u && visibleUser(i, u, viewerId) && !isHidden(i, viewerId, u.id)).map(userMini);
   return {
-    artist, cards, popular, highest, lists, reviews, fans,
+    artist, songCount: songs.length, popular, highest, lists, reviews, fans,
     albums: albums.map((a) => ({ slug: a.slug, title: a.title, year: Number(a.releaseDate.slice(0, 4)), cover: coverOf(i, a.id), count: i.songsByAlbum.get(a.id)?.length ?? 0 })),
     avg: totals.n ? totals.sum / totals.n : 0, ratingCount: totals.n,
     following: !!viewerId && i.db.artistFollows.some((f) => f.userId === viewerId && f.artistId === artist.id),
@@ -368,7 +378,7 @@ export function getAlbumPage(slug: string, viewerId?: string) {
     myAvg: mine.length ? mine.reduce((a, b) => a + b, 0) / mine.length : 0,
     myRatedCount: mine.length,
     states: viewerStates(songs.map((s) => s.id), viewerId),
-    otherAlbums: i.db.albums.filter((a) => a.artistId === artist.id && a.id !== album.id).map((a) => ({ slug: a.slug, title: a.title, year: Number(a.releaseDate.slice(0, 4)), cover: coverOf(i, a.id) })),
+    otherAlbums: i.db.albums.filter((a) => a.artistId === artist.id && a.id !== album.id).sort((a, b) => b.releaseDate.localeCompare(a.releaseDate) || byId(a.id, b.id)).map((a) => ({ slug: a.slug, title: a.title, year: Number(a.releaseDate.slice(0, 4)), cover: coverOf(i, a.id) })),
   };
 }
 
@@ -376,7 +386,7 @@ export function allGenres(): { name: string; slug: string; count: number }[] {
   const i = idx();
   const counts = new Map<string, number>();
   for (const s of i.db.songs) for (const g of s.genres) counts.set(g, (counts.get(g) ?? 0) + 1);
-  return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([name, count]) => ({ name, slug: slugify(name), count }));
+  return [...counts.entries()].sort((a, b) => b[1] - a[1] || byId(a[0], b[0])).map(([name, count]) => ({ name, slug: slugify(name), count }));
 }
 
 export function getGenrePage(slug: string, viewerId?: string) {
@@ -390,11 +400,11 @@ export function getGenrePage(slug: string, viewerId?: string) {
   for (const s of songs) for (const a of s.artistIds) artistCount.set(a, (artistCount.get(a) ?? 0) + (st(s.id)?.logCount ?? 0));
   return {
     name,
-    topRated: [...songs].filter((s) => (st(s.id)?.ratingCount ?? 0) >= 2).sort((a, b) => weightedAvg(st(b.id)) - weightedAvg(st(a.id))).slice(0, 12).map((s) => songCard(i, s)),
-    popular: [...songs].sort((a, b) => (st(b.id)?.logCount ?? 0) - (st(a.id)?.logCount ?? 0)).slice(0, 12).map((s) => songCard(i, s)),
-    reviews: i.db.entries.filter((e) => e.review && ids.has(e.songId) && entryOk(i, e, viewerId)).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 6).map((e) => reviewView(i, e, viewerId)),
-    lists: i.db.lists.filter((l) => l.visibility === "public" && listOk(i, l, viewerId) && l.items.filter((it) => ids.has(it.songId)).length >= 3).slice(0, 4).map((l) => listCard(i, l)),
-    artists: [...artistCount.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([id]) => i.artist.get(id)!).map((a) => ({ name: a.name, slug: a.slug, imageUrl: a.imageUrl, hue: a.hue })),
+    topRated: [...songs].filter((s) => (st(s.id)?.ratingCount ?? 0) >= 2).sort((a, b) => weightedAvg(st(b.id)) - weightedAvg(st(a.id)) || byId(a.id, b.id)).slice(0, 12).map((s) => songCard(i, s)),
+    popular: [...songs].sort((a, b) => (st(b.id)?.logCount ?? 0) - (st(a.id)?.logCount ?? 0) || byId(a.id, b.id)).slice(0, 12).map((s) => songCard(i, s)),
+    reviews: i.db.entries.filter((e) => e.review && ids.has(e.songId) && entryOk(i, e, viewerId)).sort((a, b) => b.createdAt.localeCompare(a.createdAt) || byId(a.id, b.id)).slice(0, 6).map((e) => reviewView(i, e, viewerId)),
+    lists: [...i.db.lists].sort(byCreated).filter((l) => l.visibility === "public" && listOk(i, l, viewerId) && l.items.filter((it) => ids.has(it.songId)).length >= 3).slice(0, 4).map((l) => listCard(i, l)),
+    artists: [...artistCount.entries()].sort((a, b) => b[1] - a[1] || byId(a[0], b[0])).slice(0, 8).map(([id]) => i.artist.get(id)!).map((a) => ({ name: a.name, slug: a.slug, imageUrl: a.imageUrl, hue: a.hue })),
     count: songs.length,
   };
 }
@@ -443,7 +453,7 @@ export function profileOverview(user: PublicUser, viewerId?: string) {
   const recent = entries.slice(0, 12).map((e) => ({ entryId: e.id, song: songCard(i, i.song.get(e.songId)!), rating: e.rating, liked: e.liked, isRelisten: e.isRelisten, review: !!e.review }));
   const reviews = entries.filter((e) => e.review).slice(0, 4).map((e) => reviewView(i, e, viewerId));
   const favArtists = user.favoriteArtistIds.map((a) => i.artist.get(a)).filter(Boolean).map((a) => ({ name: a!.name, slug: a!.slug, imageUrl: a!.imageUrl, hue: a!.hue }));
-  const lists = i.db.lists.filter((l) => l.userId === user.id && !l.removed && (l.visibility === "public" || l.userId === viewerId)).slice(0, 3).map((l) => listCard(i, l));
+  const lists = i.db.lists.filter((l) => l.userId === user.id && !l.removed && (l.visibility === "public" || l.userId === viewerId)).sort(byUpdated).slice(0, 3).map((l) => listCard(i, l));
   const ratings = [...(i.ratingsByUser.get(user.id)?.values() ?? [])];
   const histogram = Array(10).fill(0);
   for (const r of ratings) histogram[r.rating * 2 - 1]++;
@@ -509,11 +519,14 @@ export function getUserReviews(user: PublicUser, sort: string, viewerId?: string
   return reviews.slice(0, MAX_DIARY_ROWS).map((e) => reviewView(i, e, viewerId));
 }
 
+/** Most recently changed list first. */
+const byUpdated = (a: SongList, b: SongList) => b.updatedAt.localeCompare(a.updatedAt) || byId(a.id, b.id);
+
 export function getUserLists(user: PublicUser, viewerId?: string) {
   const i = idx();
   return i.db.lists
     .filter((l) => l.userId === user.id && canSeeList(l, viewerId) && (l.visibility === "public" || l.userId === viewerId))
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    .sort(byUpdated)
     .map((l) => listCard(i, l));
 }
 
@@ -521,13 +534,14 @@ export function getUserLikes(user: PublicUser) {
   const i = idx();
   return i.db.likes
     .filter((l) => l.userId === user.id)
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || byId(a.songId, b.songId))
     .map((l) => ({ song: songCard(i, i.song.get(l.songId)!), rating: i.ratingsByUser.get(user.id)?.get(l.songId)?.rating }));
 }
 
 export function getFollowList(user: PublicUser, kind: "followers" | "following", viewerId?: string) {
   const i = idx();
-  const ids = [...((kind === "followers" ? i.followers : i.following).get(user.id) ?? [])];
+  const rows = i.db.follows.filter((f) => (kind === "followers" ? f.followingId : f.followerId) === user.id).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || byId(kind === "followers" ? a.followerId : a.followingId, kind === "followers" ? b.followerId : b.followingId));
+  const ids = rows.map((f) => (kind === "followers" ? f.followerId : f.followingId));
   const vf = viewerId ? i.following.get(viewerId) ?? new Set() : new Set<string>();
   return ids
     .map((id) => i.user.get(id)!)
@@ -548,7 +562,7 @@ export function getReview(id: string, viewerId?: string) {
 
 export function getComments(targetType: "entry" | "list", targetId: string, viewerId?: string): CommentView[] {
   const i = idx();
-  const all = (i.commentsByTarget.get(`${targetType}:${targetId}`) ?? []).filter((c) => !isHidden(i, viewerId, c.userId) && !i.user.get(c.userId)?.suspended).slice(0, MAX_COMMENTS);
+  const all = [...(i.commentsByTarget.get(`${targetType}:${targetId}`) ?? [])].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || byId(a.id, b.id)).filter((c) => !isHidden(i, viewerId, c.userId) && !i.user.get(c.userId)?.suspended).slice(0, MAX_COMMENTS);
   const likes = new Map<string, Set<string>>();
   for (const l of i.db.commentLikes) {
     if (!likes.has(l.commentId)) likes.set(l.commentId, new Set());
@@ -559,9 +573,9 @@ export function getComments(targetType: "entry" | "list", targetId: string, view
     likeCount: likes.get(c.id)?.size ?? 0, viewerLiked: !!viewerId && !!likes.get(c.id)?.has(viewerId),
     replies: [], canDelete: viewerId === c.userId,
   });
-  const roots = all.filter((c) => !c.parentId).sort((a, b) => a.createdAt.localeCompare(b.createdAt)).map(toView);
-  const byId = new Map(roots.map((r) => [r.id, r]));
-  for (const c of all.filter((c) => c.parentId).sort((a, b) => a.createdAt.localeCompare(b.createdAt))) byId.get(c.parentId!)?.replies.push(toView(c));
+  const roots = all.filter((c) => !c.parentId).map(toView);
+  const rootById = new Map(roots.map((r) => [r.id, r]));
+  for (const c of all.filter((c) => c.parentId)) rootById.get(c.parentId!)?.replies.push(toView(c));
   return roots;
 }
 
@@ -584,15 +598,15 @@ export function getListPage(id: string, viewerId?: string) {
 
 export function viewerLists(viewerId: string) {
   const i = idx();
-  return i.db.lists.filter((l) => l.userId === viewerId && !l.removed).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map((l) => ({ id: l.id, title: l.title, count: l.items.length, songIds: l.items.map((x) => x.songId) }));
+  return i.db.lists.filter((l) => l.userId === viewerId && !l.removed).sort(byUpdated).map((l) => ({ id: l.id, title: l.title, count: l.items.length, songIds: l.items.map((x) => x.songId) }));
 }
 
 export function browseLists(sort: string, viewerId?: string): ListCard[] {
   const i = idx();
   const lists = i.db.lists.filter((l) => l.visibility === "public" && listOk(i, l, viewerId));
-  if (sort === "recent") lists.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  else lists.sort((a, b) => (i.listLikes.get(b.id)?.size ?? 0) - (i.listLikes.get(a.id)?.size ?? 0));
-  return lists.map((l) => listCard(i, l));
+  if (sort === "recent") lists.sort(byUpdated);
+  else lists.sort((a, b) => (i.listLikes.get(b.id)?.size ?? 0) - (i.listLikes.get(a.id)?.size ?? 0) || byId(a.id, b.id));
+  return lists.slice(0, MAX_LIST_CARDS).map((l) => listCard(i, l));
 }
 
 // ── Listen later ────────────────────────────────────────────────────────
@@ -600,7 +614,7 @@ export function browseLists(sort: string, viewerId?: string): ListCard[] {
 export function getListenLater(viewerId: string) {
   const i = idx();
   const m = i.listenLater.get(viewerId) ?? new Map();
-  return [...m.entries()].map(([sid, at]) => ({ song: songCard(i, i.song.get(sid)!), addedAt: at as string, genres: i.song.get(sid)!.genres }));
+  return [...m.entries()].sort((a, b) => (a[1] as string).localeCompare(b[1] as string) || byId(a[0], b[0])).map(([sid, at]) => ({ song: songCard(i, i.song.get(sid)!), addedAt: at as string, genres: i.song.get(sid)!.genres }));
 }
 
 // ── Feed ────────────────────────────────────────────────────────────────
@@ -611,7 +625,7 @@ export function getFeed(viewerId: string, before?: string, limit = 25): { items:
   const actors = new Set([...following, viewerId]);
   const events = i.db.activity
     .filter((a) => actors.has(a.actorId) && (!before || a.createdAt < before) && !isHidden(i, viewerId, a.actorId))
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || byId(a.id, b.id));
   const items: FeedItem[] = [];
   const likedSeen = new Set<string>();
   for (const a of events) {
@@ -651,7 +665,7 @@ export function getNotifications(userId: string) {
   const i = idx();
   return i.db.notifications
     .filter((n) => n.userId === userId && !isHidden(i, userId, n.actorId))
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || byId(a.id, b.id))
     .slice(0, 80)
     .map((n) => {
       const actor = i.user.get(n.actorId);
@@ -678,61 +692,18 @@ export function unreadCount(userId: string) {
 
 export function compatibility(aId: string, bId: string): { score: number; shared: number; sharedTop: SongCard[] } {
   const i = idx();
-  const a = i.ratingsByUser.get(aId) ?? new Map();
-  const b = i.ratingsByUser.get(bId) ?? new Map();
-  let dot = 0, na = 0, nb = 0, shared = 0;
-  const both: { id: string; s: number }[] = [];
-  for (const [sid, ra] of a) {
-    const rb = b.get(sid);
-    if (!rb) continue;
-    shared++;
-    const x = ra.rating - 3, y = rb.rating - 3;
-    dot += x * y; na += x * x; nb += y * y;
-    both.push({ id: sid, s: ra.rating + rb.rating });
-  }
-  // Genre overlap smooths sparse co-ratings.
-  const gv = (m: Map<string, { rating: number }>) => {
-    const v = new Map<string, number>();
-    for (const [sid, r] of m) for (const g of i.song.get(sid)?.genres ?? []) v.set(g, (v.get(g) ?? 0) + (r.rating - 2.5));
-    return v;
-  };
-  const ga = gv(a), gb = gv(b);
-  let gdot = 0, gna = 0, gnb = 0;
-  for (const [g, x] of ga) { gdot += x * (gb.get(g) ?? 0); gna += x * x; }
-  for (const y of gb.values()) gnb += y * y;
-  const genreSim = gna && gnb ? gdot / Math.sqrt(gna * gnb) : 0;
-  const ratingSim = na && nb ? dot / Math.sqrt(na * nb) : 0;
-  const shrink = shared / (shared + 4);
-  const sim = ratingSim * shrink * 0.6 + genreSim * 0.4;
-  const score = Math.round(Math.max(0, Math.min(99, 50 + sim * 50)));
-  return { score, shared, sharedTop: both.sort((x, y) => y.s - x.s).slice(0, 4).map((x) => songCard(i, i.song.get(x.id)!)) };
+  const ratings = (id: string) => new Map([...(i.ratingsByUser.get(id) ?? [])].map(([sid, r]) => [sid, r.rating]));
+  const c = compat(ratings(aId), ratings(bId), (sid) => i.song.get(sid)?.genres ?? []);
+  return { score: c.score, shared: c.shared, sharedTop: c.topIds.map((id) => songCard(i, i.song.get(id)!)) };
 }
 
 // ── Search ──────────────────────────────────────────────────────────────
 
-function norm(s: string) {
-  return s.normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
-}
-
 export function search(q: string, limit = 8, viewerId?: string) {
   const i = idx();
-  const nq = norm(q);
-  const tokens = nq.split(" ").filter(Boolean);
-  if (!tokens.length) return { songs: [], artists: [], albums: [], users: [], lists: [] };
-  const matchScore = (primary: string, secondary: string, pop: number) => {
-    const p = norm(primary);
-    const all = p + " " + norm(secondary);
-    if (!tokens.every((t) => all.includes(t))) return 0;
-    let s = 10;
-    if (p === nq) s += 100;
-    else if (p.startsWith(nq)) s += 60;
-    const pTokens = p.split(" ");
-    const titleHits = tokens.filter((t) => pTokens.includes(t)).length;
-    s += titleHits * 15;
-    // Every title word covered by query = title matched exactly + artist given.
-    if (pTokens.every((t) => tokens.includes(t))) s += 50;
-    return s + pop;
-  };
+  const m = matcher(q);
+  if (!m.tokens.length) return { songs: [], artists: [], albums: [], users: [], lists: [] };
+  const matchScore = m.score;
   const songs = i.db.songs
     .map((s) => {
       const artist = s.artistIds.map((a) => i.artist.get(a)!.name).join(" ");
@@ -741,33 +712,34 @@ export function search(q: string, limit = 8, viewerId?: string) {
       return { s, score: matchScore(s.title, `${artist} ${album} ${s.featured.join(" ")}`, pop) };
     })
     .filter((x) => x.score > 0)
-    .sort((a, b) => b.score - a.score)
+    .sort((a, b) => b.score - a.score || byId(a.s.id, b.s.id))
     .slice(0, limit)
     .map((x) => songCard(i, x.s));
   const artists = i.db.artists
     .map((a) => ({ a, score: matchScore(a.name, a.genres.join(" "), (i.songsByArtist.get(a.id)?.length ?? 0) / 5) }))
-    .filter((x) => x.score > 0).sort((a, b) => b.score - a.score).slice(0, 5)
+    .filter((x) => x.score > 0).sort((a, b) => b.score - a.score || byId(a.a.id, b.a.id)).slice(0, 5)
     .map(({ a }) => ({ name: a.name, slug: a.slug, imageUrl: a.imageUrl, hue: a.hue, genres: a.genres }));
   const albums = i.db.albums
     .map((al) => ({ al, score: matchScore(al.title, i.artist.get(al.artistId)!.name, 0) }))
-    .filter((x) => x.score > 0).sort((a, b) => b.score - a.score).slice(0, 5)
+    .filter((x) => x.score > 0).sort((a, b) => b.score - a.score || byId(a.al.id, b.al.id)).slice(0, 5)
     .map(({ al }) => ({ title: al.title, slug: al.slug, artist: i.artist.get(al.artistId)!.name, year: Number(al.releaseDate.slice(0, 4)), cover: coverOf(i, al.id) }));
   const users = i.db.users
     .filter((u) => !u.suspended && !isHidden(i, viewerId, u.id))
     .map((u) => ({ u, score: matchScore(u.username, u.displayName, 0) }))
-    .filter((x) => x.score > 0).sort((a, b) => b.score - a.score).slice(0, 5)
+    .filter((x) => x.score > 0).sort((a, b) => b.score - a.score || byId(a.u.id, b.u.id)).slice(0, 5)
     .map(({ u }) => userMini(u));
   const lists = i.db.lists
     .filter((l) => l.visibility === "public" && listOk(i, l, viewerId))
     .map((l) => ({ l, score: matchScore(l.title, l.description, 0) }))
-    .filter((x) => x.score > 0).sort((a, b) => b.score - a.score).slice(0, 5)
+    .filter((x) => x.score > 0).sort((a, b) => b.score - a.score || byId(a.l.id, b.l.id)).slice(0, 5)
     .map(({ l }) => listCard(i, l));
   return { songs, artists, albums, users, lists };
 }
 
 export function catalogueSize() {
   const db = idx().db;
-  return { songs: db.songs.length, users: db.users.length, logs: db.entries.length, reviews: db.entries.filter((e) => e.review).length };
+  const live = db.entries.filter((e) => !e.removed);
+  return { songs: db.songs.length, users: db.users.length, logs: live.length, reviews: live.filter((e) => e.review).length };
 }
 
 /** Distinct album covers (one song per artwork) for decorative walls. */
@@ -775,7 +747,7 @@ export function artworkWall(limit = 60): SongCard[] {
   const i = idx();
   const seen = new Set<string>();
   const out: SongCard[] = [];
-  for (const s of i.db.songs) {
+  for (const s of [...i.db.songs].sort((a, b) => byId(a.id, b.id))) {
     const card = songCard(i, s);
     const key = card.cover.artworkUrl ?? `${card.cover.title}`;
     if (seen.has(key)) continue;

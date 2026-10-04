@@ -3,6 +3,7 @@ import zlib from "zlib";
 import { jar } from "./setup";
 import { aggregateHistory, ImportError, MAX_IMPORT_TRACKS, normalizeArtist, normalizeTitle, readZipJson } from "@/lib/spotify-import";
 import { getDB } from "@/lib/server/store";
+import { state } from "./helpers/world";
 import { startSession } from "@/lib/server/auth";
 import { importHistory, importWorkerIdle, findLocalSong, pickResult } from "@/lib/server/history-import";
 import { forgetUser, jobs, resetImportQueueForTests, statusFor } from "@/lib/server/import-queue";
@@ -139,26 +140,27 @@ describe("importing history", () => {
     return { song: s, artist: db.artists.find((a) => a.id === s.artistIds[0])!.name };
   };
 
-  it("adds songs MusicBox already has as one diary entry each, without feed activity", () => {
+  it("adds songs MusicBox already has as one diary entry each, without feed activity", async () => {
     const { song, artist } = seeded();
     const u = user("ellis");
-    const before = getDB().entries.filter((e) => e.userId === u.id && e.songId === song.id && !e.removed).length;
-    const activityBefore = getDB().activity.length;
-    expect(findLocalSong({ t: `${song.title} - Remastered 2009`, a: artist })?.id).toBe(song.id);
+    const before = (await state()).entries.filter((e) => e.userId === u.id && e.songId === song.id && !e.removed).length;
+    const activityBefore = (await state()).activity.length;
+    expect(await findLocalSong({ t: `${song.title} - Remastered 2009`, a: artist })).toBe(song.id);
 
     const track = { t: song.title, a: artist, al: "x", p: 142, ms: 1e7, f: "2019-03-04", l: "2025-12-31" };
-    const r1 = importHistory(u.id, [track]);
+    const r1 = await importHistory(u.id, [track]);
     if (before) { expect(r1).toMatchObject({ added: 0, alreadyLogged: 1 }); return; }
     expect(r1).toMatchObject({ added: 1, queued: 0, alreadyLogged: 0 });
-    const e = getDB().entries.find((x) => x.userId === u.id && x.songId === song.id && x.tags.includes("spotify-import"))!;
+    const after = await state();
+    const e = after.entries.find((x) => x.userId === u.id && x.songId === song.id && x.tags.includes("spotify-import"))!;
     expect(e.listenedAt).toBe("2025-12-31");
     expect(e.memory).toBe("Played 142 times on Spotify, first in March 2019.");
     expect(e.rating).toBeUndefined();
-    expect(getDB().activity).toHaveLength(activityBefore);
-    expect(getDB().songStats[song.id].logCount).toBeGreaterThan(0);
+    expect(after.activity).toHaveLength(activityBefore);
+    expect(after.songStats[song.id].logCount).toBeGreaterThan(0);
 
     // Importing again changes nothing.
-    expect(importHistory(u.id, [track])).toMatchObject({ added: 0, alreadyLogged: 1 });
+    expect(await importHistory(u.id, [track])).toMatchObject({ added: 0, alreadyLogged: 1 });
   });
 
   it("only accepts a catalogue result with the same title and artist", () => {
@@ -192,7 +194,7 @@ describe("importing history", () => {
       { t: "Second Stripe", a: "Fixture Band", p: 40, ms: 4e6, f: "2018-05-01", l: "2025-01-01" },
       { t: "A Song Nobody Catalogued", a: "Ghost", p: 3, ms: 3e5, f: "2020-01-01", l: "2020-02-01" },
     ];
-    const result = importHistory(u.id, tracks);
+    const result = await importHistory(u.id, tracks);
     expect(result).toMatchObject({ added: 0, queued: 3 });
     expect(statusFor(u.id)).toMatchObject({ active: true, total: 3 });
 
@@ -200,7 +202,7 @@ describe("importing history", () => {
 
     // Zebra Anthem needed one search; the album import then made "Second Stripe" a local match, so no second search.
     expect(calls.filter((c) => c.includes("/recording?"))).toHaveLength(2); // Zebra Anthem + the Ghost song
-    const db = getDB();
+    const db = await state();
     const mine = db.entries.filter((e) => e.userId === u.id && e.tags.includes("spotify-import"));
     expect(mine.map((e) => db.songs.find((s) => s.id === e.songId)!.title).sort()).toEqual(["Second Stripe", "Zebra Anthem"]);
     expect(statusFor(u.id)).toEqual({ active: false, total: 3, added: 2, pending: 0, notFound: 1, failed: 0, createdAt: expect.any(String) });
@@ -250,9 +252,9 @@ describe("import API", () => {
     expect((await cancelRoute(new Request("http://localhost/api/import/status", { method: "DELETE", headers: { host: "localhost", origin: "http://localhost" } }))).status).toBe(200);
   });
 
-  it("deleting an account removes the queued import", () => {
+  it("deleting an account removes the queued import", async () => {
     const u = user("maya");
-    importHistory(u.id, [{ t: "Queued Song", a: "Queued Artist", p: 1, ms: 1, f: "2020-01-01", l: "2020-01-01" }]);
+    await importHistory(u.id, [{ t: "Queued Song", a: "Queued Artist", p: 1, ms: 1, f: "2020-01-01", l: "2020-01-01" }]);
     expect(statusFor(u.id)).not.toBeNull();
     forgetUser(u.id);
     expect(statusFor(u.id)).toBeNull();

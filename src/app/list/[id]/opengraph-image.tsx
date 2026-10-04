@@ -1,12 +1,12 @@
-import { getListPage } from "@/lib/server/queries";
 import { artDataUrl, brandCard, plural, renderCard } from "@/lib/server/og";
+import { data } from "@/lib/server/data";
 
 export const alt = "List on MusicBox";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
 export default async function Image({ params }: { params: Promise<{ id: string }> }) {
-  const page = getListPage((await params).id);
+  const page = await data.getListPage((await params).id);
   if (!page) return brandCard();
   // Unlisted and private lists are never previewed with their contents.
   if (page.list.visibility !== "public") return brandCard();

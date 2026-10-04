@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getViewer } from "@/lib/server/auth";
-import { idx } from "@/lib/server/indexes";
+import { data } from "@/lib/server/data";
 import { rateLimit } from "@/lib/server/ratelimit";
 import { getLyrics } from "@/lib/server/lyrics";
 
@@ -11,13 +11,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ songId:
   if (!rateLimit(`lyrics:${viewer.id}`, 20, 0.5)) return NextResponse.json({ error: "Too many requests." }, { status: 429, headers: { "Retry-After": "5" } });
   const { songId } = await params;
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(songId)) return NextResponse.json({ error: "Invalid id" }, { status: 400 });
-  const i = idx();
-  const song = i.song.get(songId);
+  const song = await data.songLite(songId);
   if (!song) return NextResponse.json({ error: "Not found" }, { status: 404 });
   try {
     const result = await getLyrics({
-      id: song.id, title: song.title, artist: i.artist.get(song.artistIds[0])?.name ?? "",
-      album: i.album.get(song.albumId)?.title ?? "", durationMs: song.durationMs,
+      id: song.id, title: song.title, artist: song.artist, album: song.album, durationMs: song.durationMs,
     });
     return NextResponse.json(result, { headers: { "Cache-Control": "private, max-age=3600" } });
   } catch {

@@ -4,7 +4,7 @@ import { clearCatalogueCache } from "@/lib/server/catalogue-cache";
 import { musicbrainz, resetMusicbrainzLimiter } from "@/lib/server/musicbrainz";
 import { importAlbum, importTrack, MetadataError } from "@/lib/server/metadata";
 import { EXTERNAL_ID } from "@/lib/server/validation";
-import { getDB } from "@/lib/server/store";
+import { state } from "./helpers/world";
 
 // ── Fixtures shaped like real MusicBrainz responses ─────────────────────
 const RADIOHEAD = "a74b1b7f-71a5-4011-9441-d0b5e4122711";
@@ -103,6 +103,13 @@ describe("SlotLimiter", () => {
     }
   });
 
+  it("lets a caller ask for a shorter wait than the limiter's own maximum", async () => {
+    const l = new SlotLimiter(1000, 60_000);
+    expect(await l.acquire(500)).toBe(true); // first caller never waits
+    expect(await l.acquire(500)).toBe(false); // next slot is 1000ms away
+    expect(l.backlogMs()).toBeLessThanOrEqual(1000);
+  });
+
   it("penalize() pushes later slots out", () => {
     const l = new SlotLimiter(1000, 60_000);
     l.penalize(5000);
@@ -188,6 +195,19 @@ describe("MusicBrainz provider", () => {
     expect(calls[0].url).toContain(`release-group/${OKC_RG}`);
   });
 
+  it("page-render lookups give up quickly while the catalogue is backed up, without calling out", async () => {
+    const calls = mockFetch(() => ({ status: 503, headers: { "retry-after": "30" } }));
+    await expect(musicbrainz.searchArtists("someone else")).rejects.toThrow(); // upstream says slow down
+    expect(calls).toHaveLength(1);
+    const { externalDiscography } = await import("@/lib/server/metadata");
+    const t = Date.now();
+    await expect(externalDiscography({ name: "Radiohead", externalId: `mb:${RADIOHEAD}` })).rejects.toThrow();
+    expect(Date.now() - t).toBeLessThan(500);
+    // the failure is remembered, so a crawler's repeat visit doesn't retry
+    await expect(externalDiscography({ name: "Radiohead", externalId: `mb:${RADIOHEAD}` })).rejects.toThrow(/temporarily/);
+    expect(calls).toHaveLength(1);
+  });
+
   it("never builds requests from malformed ids", async () => {
     const calls = mockFetch(route);
     expect(await musicbrainz.getTrack("mb:../../admin")).toBeNull();
@@ -227,7 +247,7 @@ describe("importing from MusicBrainz", () => {
     mockFetch(route);
     await musicbrainz.searchTracks("karma police", 8); // search results are what users open from
     await importTrack(`mb:${REC_STUDIO}`);
-    const db = getDB();
+    const db = await state();
     const album = db.albums.find((a) => a.externalId === `mb:${OKC_RG}`)!;
     expect(album.artworkUrl).toContain("coverartarchive.org");
     expect(db.artists.filter((a) => a.externalId === `mb:${RADIOHEAD}`)).toHaveLength(1);
@@ -237,6 +257,6 @@ describe("importing from MusicBrainz", () => {
     const before = db.songs.length;
     await importAlbum(`mb:${OKC_RG}`);
     await importTrack(`mb:${REC_STUDIO}`);
-    expect(getDB().songs.length).toBe(before);
+    expect((await state()).songs.length).toBe(before);
   });
 });

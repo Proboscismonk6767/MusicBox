@@ -2,25 +2,25 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { getViewer } from "@/lib/server/auth";
-import { getAlbumPage } from "@/lib/server/queries";
 import { Artwork } from "@/components/Artwork";
 import { SongRow } from "@/components/song-controls";
 import { SectionHeader, Stars } from "@/components/ui";
 import { formatRuntime } from "@/lib/format";
 import { slugify } from "@/lib/util";
 import { RateTracks } from "./RateTracks";
+import { data } from "@/lib/server/data";
 
 type Props = { params: Promise<{ slug: string }> };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
-  const page = getAlbumPage((await params).slug);
+  const page = await data.getAlbumPage((await params).slug);
   if (!page) return { title: "Album not found" };
   return { title: `${page.album.title} by ${page.artist.name} — Track Ratings`, description: `Every track on ${page.album.title} (${page.album.releaseDate.slice(0, 4)}), rated by the MusicBox community.`, alternates: { canonical: `/album/${page.album.slug}` } };
 }
 
 export default async function AlbumPage({ params }: Props) {
   const viewer = await getViewer();
-  const page = getAlbumPage((await params).slug, viewer?.id);
+  const page = await data.getAlbumPage((await params).slug, viewer?.id);
   if (!page) notFound();
   const { album, artist, tracks } = page;
   return (

@@ -2,13 +2,14 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { jar, requestHeaders } from "./setup";
 import * as actions from "@/app/actions";
 import { getDB } from "@/lib/server/store";
+import { setProfileVisibility, state } from "./helpers/world";
 import { getSessionUser, hashToken, startSession } from "@/lib/server/auth";
 import { resetRateLimits } from "@/lib/server/ratelimit";
 import { jsonForScript, safeExternalUrl, safeRedirectPath } from "@/lib/server/security";
-import { getReview, getProfile, trendingReviews, search } from "@/lib/server/queries";
 import { buildCsp } from "@/lib/csp";
 import { GET as openRoute } from "@/app/open/[kind]/[id]/route";
 import { GET as catalogueRoute } from "@/app/api/search/catalogue/route";
+import { data } from "@/lib/server/data";
 
 const user = (username: string) => getDB().users.find((u) => u.username === username)!;
 async function loginAs(username: string) {
@@ -46,14 +47,16 @@ describe("authentication boundary", () => {
       const r = await call();
       expect(r.ok).toBe(false);
     }
-    expect(getDB().ratings.some((r) => r.songId === song.id && !getDB().users.some((u) => u.id === r.userId))).toBe(false);
+    const db = await state();
+    expect(db.ratings.some((r) => r.songId === song.id && !db.users.some((u) => u.id === r.userId))).toBe(false);
   });
 
   it("stores only a hash of the session token", async () => {
     await loginAs("maya");
     const token = [...jar.values()][0];
-    expect(getDB().sessions.some((s) => (s as unknown as Record<string, unknown>).token === token)).toBe(false);
-    expect(getDB().sessions.some((s) => s.tokenHash === hashToken(token))).toBe(true);
+    const sessions = (await state()).sessions;
+    expect(sessions.some((s) => (s as unknown as Record<string, unknown>).token === token)).toBe(false);
+    expect(sessions.some((s) => s.tokenHash === hashToken(token))).toBe(true);
   });
 
   it("invalidates the session on logout", async () => {
@@ -104,7 +107,7 @@ describe("authorization (BOLA/IDOR)", () => {
     await loginAs("maya");
     expect((await actions.updateEntry(victim.id, { review: "pwned" })).ok).toBe(false);
     expect((await actions.deleteEntry(victim.id)).ok).toBe(false);
-    expect(getDB().entries.find((e) => e.id === victim.id)?.review).toBe(before);
+    expect((await state()).entries.find((e) => e.id === victim.id)?.review).toBe(before);
   });
 
   it("cannot edit, add to or delete another user's list", async () => {
@@ -114,14 +117,14 @@ describe("authorization (BOLA/IDOR)", () => {
     expect((await actions.updateList(list.id, { title: "pwned" })).ok).toBe(false);
     expect((await actions.addToList(list.id, aSong().id)).ok).toBe(false);
     expect((await actions.deleteList(list.id)).ok).toBe(false);
-    expect(getDB().lists.find((l) => l.id === list.id)?.title).toBe(title);
+    expect((await state()).lists.find((l) => l.id === list.id)?.title).toBe(title);
   });
 
   it("cannot delete another user's comment", async () => {
     const c = getDB().comments.find((x) => x.userId !== user("kai").id)!;
     await loginAs("kai");
     expect((await actions.deleteComment(c.id)).ok).toBe(false);
-    expect(getDB().comments.some((x) => x.id === c.id)).toBe(true);
+    expect((await state()).comments.some((x) => x.id === c.id)).toBe(true);
   });
 
   it("ignores client-supplied owner ids (identity comes from the session)", async () => {
@@ -130,23 +133,23 @@ describe("authorization (BOLA/IDOR)", () => {
     expect(r.ok).toBe(false); // unknown keys are rejected outright
     const ok = await actions.logSong({ songId: aSong().id, rating: 4 });
     expect(ok.ok).toBe(true);
-    expect(getDB().entries.find((e) => e.id === (ok.ok ? ok.data : ""))?.userId).toBe(user("sam").id);
+    expect((await state()).entries.find((e) => e.id === (ok.ok ? ok.data : ""))?.userId).toBe(user("sam").id);
   });
 
   it("hides private profiles' reviews from other users everywhere", async () => {
     const theo = user("theo");
-    theo.profileVisibility = "private";
+    await setProfileVisibility(theo.id, "private");
     try {
       const e = entryOf("theo");
-      expect(getReview(e.id, user("maya").id)).toBeNull();
-      expect(trendingReviews(500, user("maya").id).some((r) => r.user.id === theo.id)).toBe(false);
-      expect(getProfile("theo", user("maya").id)?.canView).toBe(false);
+      expect(await data.getReview(e.id, user("maya").id)).toBeNull();
+      expect((await data.trendingReviews(500, user("maya").id)).some((r) => r.user.id === theo.id)).toBe(false);
+      expect((await data.getProfile("theo", user("maya").id))?.canView).toBe(false);
       await loginAs("maya");
       expect((await actions.toggleReviewLike(e.id)).ok).toBe(false);
       expect((await actions.addComment("entry", e.id, "hi")).ok).toBe(false);
-      expect(getReview(e.id, theo.id)).not.toBeNull(); // owner still sees it
+      expect(await data.getReview(e.id, theo.id)).not.toBeNull(); // owner still sees it
     } finally {
-      theo.profileVisibility = "public";
+      await setProfileVisibility(theo.id, "public");
     }
   });
 
@@ -157,8 +160,8 @@ describe("authorization (BOLA/IDOR)", () => {
     expect((await actions.addComment("entry", entryOf("priya").id, "hello")).ok).toBe(false);
   });
 
-  it("profile data never includes the password hash", () => {
-    const p = getProfile("alex");
+  it("profile data never includes the password hash", async () => {
+    const p = await data.getProfile("alex");
     expect(JSON.stringify(p)).not.toContain("scrypt$");
   });
 });
@@ -167,16 +170,16 @@ describe("admin", () => {
   it("non-admins cannot moderate", async () => {
     await loginAs("alex");
     await actions.report("entry", entryOf("maya").id, "spam");
-    const rep = getDB().reports.at(-1)!;
+    const rep = (await state()).reports.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)).at(-1)!;
     expect((await actions.moderate(rep.id, "remove")).ok).toBe(false);
-    expect(getDB().entries.find((e) => e.id === rep.targetId)?.removed).toBeFalsy();
+    expect((await state()).entries.find((e) => e.id === rep.targetId)?.removed).toBeFalsy();
   });
 
   it("admins (from ADMIN_USERNAMES) can moderate", async () => {
     await loginAs("abtin");
-    const rep = getDB().reports.find((r) => r.status === "open")!;
+    const rep = (await state()).reports.find((r) => r.status === "open")!;
     expect((await actions.moderate(rep.id, "remove")).ok).toBe(true);
-    expect(getDB().entries.find((e) => e.id === rep.targetId)?.removed).toBe(true);
+    expect((await state()).entries.find((e) => e.id === rep.targetId)?.removed).toBe(true);
   });
 
   it("role cannot be mass-assigned through settings", async () => {
@@ -262,8 +265,8 @@ describe("output safety", () => {
     expect(csp).toContain("object-src 'none'");
   });
 
-  it("search results expose only public user fields", () => {
-    const r = search("alex");
+  it("search results expose only public user fields", async () => {
+    const r = await data.search("alex");
     expect(JSON.stringify(r)).not.toMatch(/passwordHash|scrypt\$|tokenHash/);
   });
 });
@@ -293,7 +296,7 @@ describe("account deletion", () => {
     await loginAs("ellis");
     const id = user("ellis").id;
     await expect(actions.deleteAccount(null, form({ confirm: "ellis", password: "musicbox-demo" }))).rejects.toMatchObject({ redirectTo: "/" });
-    const db = getDB();
+    const db = await state();
     expect(db.users.some((u) => u.id === id)).toBe(false);
     expect(db.entries.some((e) => e.userId === id)).toBe(false);
     expect(db.ratings.some((r) => r.userId === id)).toBe(false);

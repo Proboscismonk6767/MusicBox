@@ -3,17 +3,17 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { getViewer } from "@/lib/server/auth";
-import { getProfile } from "@/lib/server/queries";
 import { Avatar, Icon } from "@/components/ui";
 import { FollowButton, BlockMuteButtons, ReportButton } from "@/components/social";
 import { ProfileTabs } from "./ProfileTabs";
 import { ProfileMenu } from "./ProfileMenu";
 import { ProfileLyric } from "./ProfileLyric";
+import { data } from "@/lib/server/data";
 
 type Props = { params: Promise<{ username: string }>; children: React.ReactNode };
 
 export async function generateMetadata({ params }: { params: Promise<{ username: string }> }): Promise<Metadata> {
-  const p = getProfile((await params).username);
+  const p = await data.getProfile((await params).username);
   if (!p) return { title: "User not found" };
   return { title: `${p.user.displayName} (@${p.user.username})`, description: p.user.bio || `${p.user.displayName}'s music diary on MusicBox: ${p.counts.logged} songs logged.` };
 }
@@ -21,7 +21,7 @@ export async function generateMetadata({ params }: { params: Promise<{ username:
 export default async function ProfileLayout({ params, children }: Props) {
   const { username } = await params;
   const viewer = await getViewer();
-  const p = getProfile(safeDecode(username), viewer?.id);
+  const p = await data.getProfile(safeDecode(username), viewer?.id);
   if (!p) notFound();
   const { user, counts } = p;
   const showLyric = !!p.lyric || p.isSelf;

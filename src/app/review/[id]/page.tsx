@@ -2,17 +2,17 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { getViewer } from "@/lib/server/auth";
-import { getReview } from "@/lib/server/queries";
 import { Artwork } from "@/components/Artwork";
 import { Comments, ReportButton, ReviewBody, ReviewLikeButton } from "@/components/social";
 import { Avatar, Icon, Stars } from "@/components/ui";
 import { formatDate } from "@/lib/format";
 import { EntryActions } from "@/app/[username]/diary/EntryActions";
+import { data } from "@/lib/server/data";
 
 type Props = { params: Promise<{ id: string }> };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
-  const r = getReview((await params).id);
+  const r = await data.getReview((await params).id);
   if (!r) return { title: "Review not found" };
   const { review: v } = r;
   return { title: `${v.user.displayName}'s review of ${v.song.title} by ${v.song.artists[0]?.name}`, description: v.review?.slice(0, 160) };
@@ -21,9 +21,9 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 export default async function ReviewPage({ params }: Props) {
   const { id } = await params;
   const viewer = await getViewer();
-  const data = getReview(id, viewer?.id);
-  if (!data) notFound();
-  const { review: r, comments, isOwner, plays, entry } = data;
+  const found = await data.getReview(id, viewer?.id);
+  if (!found) notFound();
+  const { review: r, comments, isOwner, plays, entry } = found;
   return (
     <div className="grid md:grid-cols-[200px_minmax(0,1fr)] gap-8 max-w-4xl">
       <Link href={`/song/${r.song.slug}`} className="hidden md:block"><Artwork cover={r.song.cover} rounded="rounded" /></Link>

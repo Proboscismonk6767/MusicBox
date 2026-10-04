@@ -2,7 +2,6 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { getViewer } from "@/lib/server/auth";
-import { getArtistPage, viewerStates } from "@/lib/server/queries";
 import { Artwork } from "@/components/Artwork";
 import { ArtistImage, ListCardView } from "@/components/cards";
 import { SongRow } from "@/components/song-controls";
@@ -12,21 +11,22 @@ import { slugify } from "@/lib/util";
 import { ArtistActions } from "./ArtistActions";
 import { Suspense } from "react";
 import { FullDiscography } from "./FullDiscography";
+import { data } from "@/lib/server/data";
 
 type Props = { params: Promise<{ slug: string }> };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
-  const page = getArtistPage((await params).slug);
+  const page = await data.getArtistPage((await params).slug);
   if (!page) return { title: "Artist not found" };
   return { title: `${page.artist.name} — Songs, Ratings & Reviews`, description: `The best ${page.artist.name} songs, ranked by the MusicBox community.`, alternates: { canonical: `/artist/${page.artist.slug}` } };
 }
 
 export default async function ArtistPage({ params }: Props) {
   const viewer = await getViewer();
-  const page = getArtistPage((await params).slug, viewer?.id);
+  const page = await data.getArtistPage((await params).slug, viewer?.id);
   if (!page) notFound();
   const { artist } = page;
-  const states = viewerStates([...page.popular, ...page.highest].map((s) => s.id), viewer?.id);
+  const states = await data.viewerStates([...page.popular, ...page.highest].map((s) => s.id), viewer?.id);
   return (
     <div>
       <header className="flex flex-col sm:flex-row items-center sm:items-end gap-6 mb-10">

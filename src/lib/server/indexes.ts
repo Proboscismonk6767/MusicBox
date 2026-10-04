@@ -85,7 +85,7 @@ export function idx(): Indexes {
     push(i.entriesBySong, e.songId, e);
     push(i.entriesByUser, e.userId, e);
   }
-  for (const a of i.entriesByUser.values()) a.sort((x, y) => (y.listenedAt + y.createdAt).localeCompare(x.listenedAt + x.createdAt));
+  for (const a of i.entriesByUser.values()) a.sort((x, y) => (y.listenedAt + y.createdAt).localeCompare(x.listenedAt + x.createdAt) || (x.id < y.id ? -1 : x.id > y.id ? 1 : 0));
   for (const r of db.ratings) {
     if (!i.ratingsByUser.has(r.userId)) i.ratingsByUser.set(r.userId, new Map());
     i.ratingsByUser.get(r.userId)!.set(r.songId, r);
@@ -114,7 +114,7 @@ export function idx(): Indexes {
     push(i.songsByAlbum, s.albumId, s);
     for (const a of s.artistIds) push(i.songsByArtist, a, s);
   }
-  for (const a of i.songsByAlbum.values()) a.sort((x, y) => x.trackNumber - y.trackNumber);
+  for (const a of i.songsByAlbum.values()) a.sort((x, y) => x.trackNumber - y.trackNumber || (x.id < y.id ? -1 : x.id > y.id ? 1 : 0));
   for (const b of db.blocks) {
     add(i.hidden, b.userId, b.targetId);
     if (b.kind === "block") add(i.hidden, b.targetId, b.userId);

@@ -2,19 +2,19 @@ import { safeDecode } from "@/lib/util";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getViewer } from "@/lib/server/auth";
-import { getProfile, getUserLists } from "@/lib/server/queries";
 import { ListRowCard } from "@/components/cards";
 import { EmptyState, Icon } from "@/components/ui";
+import { data } from "@/lib/server/data";
 
 export const metadata = { title: "Lists" };
 
 export default async function UserListsPage({ params }: { params: Promise<{ username: string }> }) {
   const { username } = await params;
   const viewer = await getViewer();
-  const p = getProfile(safeDecode(username), viewer?.id);
+  const p = await data.getProfile(safeDecode(username), viewer?.id);
   if (!p) notFound();
   if (!p.canView) return null;
-  const lists = getUserLists(p.raw, viewer?.id);
+  const lists = await data.getUserLists(p.raw, viewer?.id);
   return (
     <div className="max-w-4xl">
       <div className="flex items-end justify-between mb-2">

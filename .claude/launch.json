@@ -1,0 +1,13 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "musicbox", "runtimeExecutable": "npm", "runtimeArgs": ["run", "dev"], "port": 3000 },
+    {
+      "name": "musicbox-prod",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["next", "start", "-p", "3200"],
+      "port": 3200,
+      "env": { "NODE_ENV": "production", "NEXT_PUBLIC_SITE_URL": "https://musicbox.example", "DATA_DIR": "./.prod-data", "CLIENT_IP_HEADER": "x-real-ip", "ADMIN_USERNAMES": "" }
+    }
+  ]
+}

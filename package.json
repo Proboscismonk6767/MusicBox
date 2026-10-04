@@ -1,0 +1,44 @@
+{
+  "name": "musicbox",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "seed": "node -e \"require('fs').rmSync('data/db.json',{force:true})\" && echo Database will be re-seeded on next request",
+    "artwork": "node scripts/fetch-artwork.mjs",
+    "artist-images": "node scripts/fetch-artist-images.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "audit:prod": "npm audit --omit=dev --audit-level=high",
+    "db:check": "node scripts/migrate-to-postgres.mjs --dry-run",
+    "db:migrate": "node scripts/migrate-to-postgres.mjs"
+  },
+  "dependencies": {
+    "next": "^15.5.27",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "server-only": "^0.0.1",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "@eslint/eslintrc": "^3.3.7",
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^26.6.4",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^15.5.27",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.3"
+  },
+  "overrides": {
+    "next": {
+      "postcss": "^8.5.28"
+    }
+  }
+}

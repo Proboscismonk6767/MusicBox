@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getDB } from "@/lib/server/store";
-import { openPglite, type Db } from "@/lib/server/sql/driver";
+import { openTestDb } from "./helpers/db";
+import type { Db } from "@/lib/server/sql/driver";
 import { applySchema } from "@/lib/server/sql/schema";
 import { importDb, verifyImport, type ImportReport } from "@/lib/server/sql/import-db";
 
@@ -8,7 +9,7 @@ import { importDb, verifyImport, type ImportReport } from "@/lib/server/sql/impo
 // app's complete data set into it. If the schema drifts from src/lib/types.ts, or the
 // importer loses or invents data, this fails.
 
-let pg: Db;
+let pg: Db & { dispose: () => Promise<void> };
 let source: ReturnType<typeof getDB>;
 let result: ImportReport;
 
@@ -17,7 +18,7 @@ const one = async <T = Record<string, unknown>>(sql: string, params?: unknown[])
 const q = (sql: string, params?: unknown[]) => pg.query(sql, params);
 
 async function fresh() {
-  const p = await openPglite();
+  const p = await openTestDb();
   await applySchema(p);
   return p;
 }
@@ -27,7 +28,7 @@ beforeAll(async () => {
   pg = await fresh();
   result = await importDb(source, pg);
 }, 120_000);
-afterAll(() => pg.close());
+afterAll(() => pg.dispose());
 
 describe("schema + importer", () => {
   it("loads every row of the app's data with nothing dropped", async () => {
@@ -153,6 +154,6 @@ describe("importing data with dangling references", () => {
     // The reply survives as a top-level comment.
     expect((await p.query<{ parent_id: string | null }>("select parent_id from comments where id = 'co_orphan'"))[0].parent_id).toBeNull();
     expect(await verifyImport(source, p)).toEqual([]);
-    await p.close();
+    await p.dispose();
   }, 120_000);
 });

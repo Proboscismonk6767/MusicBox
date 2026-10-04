@@ -15,6 +15,7 @@
     "lint": "eslint .",
     "audit:prod": "npm audit --omit=dev --audit-level=high",
     "loadtest": "node scripts/loadtest.mjs",
+    "e2e": "node scripts/e2e-smoke.mjs",
     "db:check": "tsx scripts/migrate-to-postgres.ts --dry-run",
     "db:migrate": "tsx scripts/migrate-to-postgres.ts"
   },

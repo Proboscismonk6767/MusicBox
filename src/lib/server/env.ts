@@ -21,6 +21,11 @@ const schema = z.object({
   // Postgres connection string. Required in production when DATA_BACKEND=postgres.
   // Without it, development uses an embedded Postgres (PGlite) stored in DATA_DIR.
   DATABASE_URL: z.string().regex(/^postgres(ql)?:\/\//).optional(),
+  // Connections kept open to Postgres by each app instance. Keep instances x this below the server's max_connections.
+  DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(200).optional(),
+  // How long (seconds) public, viewer-independent reads (trending, top rated, genres, similar songs) may be reused
+  // before asking Postgres again. Default 30 in production, 0 (off) elsewhere. Only applies to DATA_BACKEND=postgres.
+  READ_CACHE_SECONDS: z.coerce.number().int().min(0).max(3600).optional(),
   // Comma-separated usernames granted moderator/admin rights. The only source of admin in production.
   ADMIN_USERNAMES: z.string().optional(),
   // Header your proxy/platform sets with the real client IP (e.g. "x-real-ip", "cf-connecting-ip", "x-vercel-forwarded-for").

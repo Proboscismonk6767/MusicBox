@@ -23,7 +23,7 @@ export function getDb(): Promise<Db> {
   if (backendName() !== "postgres") throw new Error("getDb() called but DATA_BACKEND is not postgres");
   const open = (g.__mbSql ??= (async () => {
     const e = env();
-    const db = e.DATABASE_URL ? await openPg(e.DATABASE_URL) : await openPglite(e.NODE_ENV === "test" ? undefined : path.join(dataDir(), "pglite"));
+    const db = e.DATABASE_URL ? await openPg(e.DATABASE_URL, { max: e.DATABASE_POOL_MAX ?? 20 }) : await openPglite(e.NODE_ENV === "test" ? undefined : path.join(dataDir(), "pglite"));
     try {
       await bootstrap(db);
     } catch (err) {

@@ -3,7 +3,8 @@ import "./setup";
 import { getDB } from "@/lib/server/store";
 import { applyEdgeCases } from "./helpers/fixtures";
 import { jsonReads } from "@/lib/server/reads-json";
-import { openPglite, type Db } from "@/lib/server/sql/driver";
+import { openTestDb } from "./helpers/db";
+import type { Db } from "@/lib/server/sql/driver";
 import { applySchema } from "@/lib/server/sql/schema";
 import { importDb } from "@/lib/server/sql/import-db";
 import { createSqlReads, type SqlReads } from "@/lib/server/sql/all-reads";
@@ -13,7 +14,7 @@ import { createSqlReads, type SqlReads } from "@/lib/server/sql/all-reads";
 // follower-only profiles, a suspended user, blocks and mutes, removed content, private
 // lists) and compares every read, for several viewers.
 
-let pg: Db;
+let pg: Db & { dispose: () => Promise<void> };
 let sql: SqlReads;
 const u = (name: string) => getDB().users.find((x) => x.username === name)!.id;
 const publicOf = (user: ReturnType<typeof getDB>["users"][number]) => { const { passwordHash: _p, ...rest } = user; void _p; return rest; };
@@ -45,13 +46,13 @@ let viewers: (string | undefined)[];
 
 beforeAll(async () => {
   applyEdgeCases();
-  pg = await openPglite();
+  pg = await openTestDb();
   await applySchema(pg);
   await importDb(getDB(), pg);
   sql = createSqlReads(pg);
   viewers = [undefined, u("abtin"), u("alex"), u("maya"), u("priya"), u("theo"), u("daniel"), u("kai"), u("sam")];
 }, 120_000);
-afterAll(() => pg.close());
+afterAll(() => pg.dispose());
 
 describe("home and discover reads", () => {
   it("trending, rated and new music", async () => {

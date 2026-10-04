@@ -1,15 +1,12 @@
 import "server-only";
 import type { Q } from "./driver";
 import type { PublicUser, SongList, User } from "../../types";
-import type { CommentView, Cover, FeedItem, ListCard, ReviewView, SongCard, UserMini, ViewerSongState } from "../../views";
-import { toAlbum, toArtist, toEntry, toList, toUser } from "./mappers";
+import type { CommentView, Cover, FeedItem, ListCard, ReviewView, SongCard } from "../../views";
+import { toEntry, toList, toUser } from "./mappers";
 import { covers, listCards, reviewViews, songCards, toUserMini, userMinis, viewerSongStates } from "./hydrate";
 import { entryOk, hidden, listOk, visibleUser } from "./visibility";
-import { byId, C, compatWith, genresOfSongs, ids, ratingsOf } from "./helpers";
-import { computeStats, matcher, rankRecommendations, type RecoSong } from "../algorithms";
-import { compat } from "../algorithms";
-import type { SongLite, AdminReport } from "../queries-extra";
-import { normalizeArtist, normalizeTitle } from "../../spotify-import";
+import { byId, C, compatWith, ids } from "./helpers";
+import { matcher } from "../algorithms";
 
 // People, reviews, lists, feed, notifications, search, recommendations and the small
 // reads for pages that don't fit elsewhere. See reads.ts for the catalogue half.
@@ -409,5 +406,3 @@ export function peopleReads(q: Q) {
 }
 
 export interface DiaryFilters { year?: string; month?: string; artist?: string; rating?: string; genre?: string; relisten?: string; liked?: string; tag?: string }
-void [toAlbum, toArtist, genresOfSongs, ratingsOf, compat, computeStats, rankRecommendations, normalizeArtist, normalizeTitle];
-export type { RecoSong, SongLite, AdminReport, UserMini, ViewerSongState };

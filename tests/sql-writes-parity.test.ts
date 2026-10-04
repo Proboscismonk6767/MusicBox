@@ -2,7 +2,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import "./setup";
 import { getDB } from "@/lib/server/store";
 import { jsonCommands, type Commands as JsonCommands } from "@/lib/server/commands-json";
-import { openPglite, type Db } from "@/lib/server/sql/driver";
+import { openTestDb } from "./helpers/db";
+import type { Db } from "@/lib/server/sql/driver";
 import { applySchema } from "@/lib/server/sql/schema";
 import { importDb } from "@/lib/server/sql/import-db";
 import { loadDb } from "@/lib/server/sql/load-db";
@@ -27,7 +28,7 @@ type Cmds = Async<JsonCommands>;
 type Step = { label: string; as?: User; run: (c: Cmds, u: User) => Promise<unknown> };
 type Outcome = { label: string; ok: boolean; value?: unknown; error?: string };
 
-let pg: Db;
+let pg: Db & { dispose: () => Promise<void> };
 let sql: Cmds;
 const jsonAsync = new Proxy({} as Cmds, { get: (_t, name: string) => async (...a: unknown[]) => (jsonCommands as unknown as Record<string, (...x: unknown[]) => unknown>)[name](...a) });
 const T0 = Date.parse("2026-05-01T12:00:00.000Z");
@@ -128,7 +129,7 @@ beforeAll(async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(T0);
   applyEdgeCases();
-  pg = await openPglite();
+  pg = await openTestDb();
   await applySchema(pg);
   await importDb(getDB(), pg);
   sql = createSqlCommands(pg) satisfies Cmds;
@@ -137,7 +138,7 @@ beforeAll(async () => {
   const d = getDB();
   start = { notifications: d.notifications.length, activity: d.activity.length, entries: d.entries.length, lists: d.lists.length, follows: d.follows.length, songs: d.songs.length };
 }, 120_000);
-afterAll(async () => { vi.useRealTimers(); await pg.close(); });
+afterAll(async () => { vi.useRealTimers(); await pg.dispose(); });
 
 describe("the databases start identical", () => {
   it("before any write", async () => { await compareWorlds("start"); });

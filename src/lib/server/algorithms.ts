@@ -2,6 +2,8 @@
 // rows these functions need and call them, so the two backends cannot disagree about a
 // score. Ties are always broken by id so a page doesn't reshuffle between requests.
 
+import { norm } from "../search-norm";
+
 const byId = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
 // ── Taste compatibility ─────────────────────────────────────────────────
@@ -212,5 +214,36 @@ export function computeStats({ allEntries, ratings, songs, artists, yearFilter }
     calendar: Object.fromEntries(calendar),
     years,
     entriesInScope: entries,
+  };
+}
+
+// ── Search ──────────────────────────────────────────────────────────────
+
+export interface Matcher {
+  /** Normalised words of the query. Empty means there is nothing to search for. */
+  tokens: string[];
+  /** 0 when the row doesn't match; otherwise higher is better. `primary` is the title/name, `secondary` the rest of the searchable text. */
+  score(primary: string, secondary: string, popularity: number): number;
+}
+
+export function matcher(query: string): Matcher {
+  const nq = norm(query);
+  const tokens = nq.split(" ").filter(Boolean);
+  return {
+    tokens,
+    score(primary, secondary, popularity) {
+      const p = norm(primary);
+      const all = p + " " + norm(secondary);
+      if (!tokens.every((t) => all.includes(t))) return 0;
+      let s = 10;
+      if (p === nq) s += 100;
+      else if (p.startsWith(nq)) s += 60;
+      const pTokens = p.split(" ");
+      const titleHits = tokens.filter((t) => pTokens.includes(t)).length;
+      s += titleHits * 15;
+      // Every title word covered by query = title matched exactly + artist given.
+      if (pTokens.every((t) => tokens.includes(t))) s += 50;
+      return s + popularity;
+    },
   };
 }

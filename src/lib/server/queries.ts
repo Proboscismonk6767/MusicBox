@@ -4,9 +4,8 @@ import type { CommentView, Cover, FeedItem, ListCard, ReviewView, SongCard, User
 import { idx, type Indexes } from "./indexes";
 import { avg, weightedAvg } from "./stats";
 import { slugify } from "../util";
-import { norm } from "../search-norm";
 import { toPublic } from "./auth";
-import { compat } from "./algorithms";
+import { compat, matcher } from "./algorithms";
 
 const MAX_DIARY_ROWS = 1000;
 const MAX_COMMENTS = 300;
@@ -702,23 +701,9 @@ export function compatibility(aId: string, bId: string): { score: number; shared
 
 export function search(q: string, limit = 8, viewerId?: string) {
   const i = idx();
-  const nq = norm(q);
-  const tokens = nq.split(" ").filter(Boolean);
-  if (!tokens.length) return { songs: [], artists: [], albums: [], users: [], lists: [] };
-  const matchScore = (primary: string, secondary: string, pop: number) => {
-    const p = norm(primary);
-    const all = p + " " + norm(secondary);
-    if (!tokens.every((t) => all.includes(t))) return 0;
-    let s = 10;
-    if (p === nq) s += 100;
-    else if (p.startsWith(nq)) s += 60;
-    const pTokens = p.split(" ");
-    const titleHits = tokens.filter((t) => pTokens.includes(t)).length;
-    s += titleHits * 15;
-    // Every title word covered by query = title matched exactly + artist given.
-    if (pTokens.every((t) => tokens.includes(t))) s += 50;
-    return s + pop;
-  };
+  const m = matcher(q);
+  if (!m.tokens.length) return { songs: [], artists: [], albums: [], users: [], lists: [] };
+  const matchScore = m.score;
   const songs = i.db.songs
     .map((s) => {
       const artist = s.artistIds.map((a) => i.artist.get(a)!.name).join(" ");

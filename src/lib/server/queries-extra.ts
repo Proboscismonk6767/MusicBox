@@ -60,7 +60,7 @@ export function songLite(songId: string): SongLite | null {
 }
 
 export function followingIds(userId: string): string[] {
-  return [...(idx().following.get(userId) ?? [])];
+  return [...(idx().following.get(userId) ?? [])].sort(byId);
 }
 
 /** The onboarding screen offers this many songs: the most-logged song per album first, then the rest by popularity. */
@@ -76,7 +76,9 @@ export function onboardingData(userId: string) {
   const topIds = new Set(top.map((s) => s.id));
   const rest = i.db.songs.filter((s) => !topIds.has(s.id)).sort((a, b) => logs(b.id) - logs(a.id) || byId(a.id, b.id));
   const songs = [...top, ...rest].slice(0, ONBOARDING_SONGS).map((s) => songCard(i, s));
-  const artists = i.db.artists.map((a) => ({ id: a.id, name: a.name, slug: a.slug, imageUrl: a.imageUrl, hue: a.hue }));
+  // The 200 artists with the most logged songs.
+  const plays = (artistId: string) => (i.songsByArtist.get(artistId) ?? []).reduce((n, s) => n + logs(s.id), 0);
+  const artists = [...i.db.artists].sort((a, b) => plays(b.id) - plays(a.id) || byId(a.id, b.id)).slice(0, 200).map((a) => ({ id: a.id, name: a.name, slug: a.slug, imageUrl: a.imageUrl, hue: a.hue }));
   const people = suggestedUsers(userId, 8).map((u) => ({ ...u, logged: i.entriesByUser.get(u.id)?.length ?? 0 }));
   const ratings = Object.fromEntries([...(i.ratingsByUser.get(userId)?.values() ?? [])].map((r) => [r.songId, r.rating]));
   return { songs, artists, people, ratings };
@@ -85,11 +87,11 @@ export function onboardingData(userId: string) {
 export function sitemapData() {
   const { db } = idx();
   return {
-    songs: db.songs.map((s) => s.slug),
-    artists: db.artists.map((a) => a.slug),
-    albums: db.albums.map((a) => a.slug),
-    users: db.users.filter((u) => u.profileVisibility === "public" && !u.suspended).map((u) => u.username),
-    lists: db.lists.filter((l) => l.visibility === "public" && !l.removed).map((l) => l.id),
+    songs: [...db.songs].sort((a, b) => byId(a.id, b.id)).map((s) => s.slug),
+    artists: [...db.artists].sort((a, b) => byId(a.id, b.id)).map((a) => a.slug),
+    albums: [...db.albums].sort((a, b) => byId(a.id, b.id)).map((a) => a.slug),
+    users: db.users.filter((u) => u.profileVisibility === "public" && !u.suspended).sort((a, b) => byId(a.id, b.id)).map((u) => u.username),
+    lists: db.lists.filter((l) => l.visibility === "public" && !l.removed).map((l) => l.id).sort(byId),
   };
 }
 
@@ -118,7 +120,7 @@ export function albumByExternalId(externalId: string): { slug: string; songCount
 
 /** Finds an artist by catalogue id, or (when none matches) by exact name, ignoring case. */
 export function artistLookup(q: { externalId?: string; name?: string }): { id: string; slug: string; externalId?: string } | null {
-  const artists = idx().db.artists;
+  const artists = [...idx().db.artists].sort((a, b) => byId(a.id, b.id));
   const a = (q.externalId && artists.find((x) => x.externalId === q.externalId)) || (q.name && artists.find((x) => x.name.toLowerCase() === q.name!.toLowerCase())) || null;
   return a ? { id: a.id, slug: a.slug, externalId: a.externalId } : null;
 }

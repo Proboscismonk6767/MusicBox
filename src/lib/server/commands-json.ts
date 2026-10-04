@@ -74,11 +74,18 @@ function artistExists(db: DB, artistId: string) {
   if (!db.artists.some((a) => a.id === artistId)) throw new UserError("That artist is unavailable.");
 }
 
-function setLike(db: DB, userId: string, songId: string, liked: boolean) {
+/** `quiet`: no feed event (a like made while logging is already shown by the log card). */
+/** Likes on comments that no longer exist go too (Postgres does this through a foreign key). */
+function pruneCommentLikes(db: DB) {
+  const live = new Set(db.comments.map((c) => c.id));
+  db.commentLikes = db.commentLikes.filter((l) => live.has(l.commentId));
+}
+
+function setLike(db: DB, userId: string, songId: string, liked: boolean, at: string, quiet = false) {
   const has = db.likes.some((l) => l.userId === userId && l.songId === songId);
   if (liked && !has) {
-    db.likes.push({ userId, songId, createdAt: now() });
-    db.activity.push({ id: newId("ac"), actorId: userId, type: "song_liked", songId, createdAt: now() });
+    db.likes.push({ userId, songId, createdAt: at });
+    if (!quiet) db.activity.push({ id: newId("ac"), actorId: userId, type: "song_liked", songId, createdAt: at });
   } else if (!liked && has) {
     db.likes = db.likes.filter((l) => !(l.userId === userId && l.songId === songId));
     db.activity = db.activity.filter((a) => !(a.actorId === userId && a.type === "song_liked" && a.songId === songId));
@@ -197,7 +204,7 @@ export const jsonCommands = {
     return mutate((db) => {
       songExists(db, songId);
       const liked = !db.likes.some((l) => l.userId === user.id && l.songId === songId);
-      setLike(db, user.id, songId, liked);
+      setLike(db, user.id, songId, liked, now());
       recomputeSongStats(db, songId);
       return liked;
     });
@@ -233,8 +240,7 @@ export const jsonCommands = {
         if (r) Object.assign(r, { rating: p.rating, updatedAt: t });
         else db.ratings.push({ userId: user.id, songId, rating: p.rating, createdAt: t, updatedAt: t });
       }
-      if (p.liked != null) setLike(db, user.id, songId, p.liked);
-      db.activity = db.activity.filter((a) => !(a.actorId === user.id && a.type === "song_liked" && a.songId === songId && a.createdAt === t));
+      if (p.liked != null) setLike(db, user.id, songId, p.liked, t, true);
       db.listenLater = db.listenLater.filter((l) => !(l.userId === user.id && l.songId === songId));
       if (entry.review) {
         const followers = new Set(db.follows.filter((f) => f.followingId === user.id).map((f) => f.followerId));
@@ -265,6 +271,7 @@ export const jsonCommands = {
       db.activity = db.activity.filter((a) => a.entryId !== entryId);
       db.reviewLikes = db.reviewLikes.filter((l) => l.entryId !== entryId);
       db.comments = db.comments.filter((c) => !(c.targetType === "entry" && c.targetId === entryId));
+      pruneCommentLikes(db);
       recomputeSongStats(db, e.songId);
       return { byAdmin: e.userId !== user.id };
     });
@@ -309,6 +316,7 @@ export const jsonCommands = {
       if (!c) throw new UserError("That comment no longer exists.");
       if (c.userId !== user.id && !isAdmin(user)) throw new Forbidden("You can only delete your own comments.");
       db.comments = db.comments.filter((x) => x.id !== commentId && x.parentId !== commentId);
+      pruneCommentLikes(db);
       return { byAdmin: c.userId !== user.id };
     });
   },
@@ -458,6 +466,7 @@ export const jsonCommands = {
       db.activity = db.activity.filter((a) => a.listId !== listId);
       db.listLikes = db.listLikes.filter((x) => x.listId !== listId);
       db.comments = db.comments.filter((c) => !(c.targetType === "list" && c.targetId === listId));
+      pruneCommentLikes(db);
       return { username: db.users.find((u) => u.id === l.userId)!.username, byAdmin: l.userId !== user.id };
     });
   },
@@ -573,7 +582,8 @@ export const jsonCommands = {
       db.lists = db.lists.filter((l) => l.userId !== uid);
       db.listLikes = db.listLikes.filter((l) => l.userId !== uid && !listIds.has(l.listId));
       db.comments = db.comments.filter((c) => c.userId !== uid && !(c.parentId && commentIds.has(c.parentId)) && !(c.targetType === "entry" && entryIds.has(c.targetId)) && !(c.targetType === "list" && listIds.has(c.targetId)));
-      db.commentLikes = db.commentLikes.filter((l) => l.userId !== uid && !commentIds.has(l.commentId));
+      db.commentLikes = db.commentLikes.filter((l) => l.userId !== uid);
+      pruneCommentLikes(db);
       db.listenLater = db.listenLater.filter((l) => l.userId !== uid);
       db.notifications = db.notifications.filter((n) => n.userId !== uid && n.actorId !== uid);
       db.activity = db.activity.filter((a) => a.actorId !== uid && a.targetUserId !== uid);

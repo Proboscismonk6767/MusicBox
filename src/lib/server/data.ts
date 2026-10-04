@@ -8,7 +8,7 @@ import { jsonCommands } from "./commands-json";
 // in-memory JSON store or from SQL. DATA_BACKEND picks the engine.
 
 export type Reads = typeof jsonReads;
-type Async<T> = { [K in keyof T]: T[K] extends (...a: infer A) => infer R ? (...a: A) => Promise<Awaited<R>> : T[K] };
+export type Async<T> = { [K in keyof T]: T[K] extends (...a: infer A) => infer R ? (...a: A) => Promise<Awaited<R>> : T[K] };
 
 async function engine(): Promise<Reads | Async<Reads>> {
   if (backendName() === "postgres") throw new Error("The Postgres backend is not available yet.");
